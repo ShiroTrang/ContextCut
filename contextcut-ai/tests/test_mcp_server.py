@@ -24,15 +24,27 @@ def text_of(result) -> str:
     return result.content[0].text
 
 
-async def test_lists_four_read_only_tools(mcp):
+READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
+              "validate_operations"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers"}
+
+
+async def test_lists_tools(mcp):
     tools = {t.name: t for t in (await mcp.list_tools()).tools}
-    assert set(tools) == {"get_editor_state", "get_timeline", "list_recordings", "get_guide"}
+    assert set(tools) == READ_TOOLS | EDIT_TOOLS
     for t in tools.values():
-        assert t.annotations.read_only_hint is True, t.name
+        assert t.annotations.read_only_hint is (t.name in READ_TOOLS), t.name
         assert t.output_schema is None, t.name
         assert t.description, t.name
+    assert tools["apply_operations"].annotations.destructive_hint is True
+    assert tools["undo_batch"].annotations.destructive_hint is True
+    assert tools["add_markers"].annotations.destructive_hint is False
     assert set(tools["get_timeline"].input_schema["properties"]) == {"start_f", "end_f", "tracks", "limit", "cursor"}
     assert set(tools["list_recordings"].input_schema["properties"]) == {"limit", "cursor"}
+    assert set(tools["apply_operations"].input_schema["properties"]) == {"ops", "base_revision", "label", "reason"}
+    assert set(tools["apply_operations"].input_schema["required"]) == {"ops", "base_revision", "label"}
+    for op in ["cut_range", "split", "trim", "move", "insert_clip", "add_music", "title_card", "caption"]:
+        assert op in tools["apply_operations"].description, op
     assert "styles/gaming" in tools["get_guide"].description
 
 
@@ -126,3 +138,65 @@ async def test_software_lists_registered_tools(mcp):
     body = guide.find_topic("software").body
     for tool in (await mcp.list_tools()).tools:
         assert f"`{tool.name}`" in body, tool.name
+
+
+async def test_apply_passthrough(mcp, bridge):
+    ops = [{"type": "cut_range", "start_f": 11400, "end_f": 14520, "reason": "im lặng"}]
+    result = await mcp.call_tool("apply_operations", {"ops": ops, "base_revision": 1873402, "label": "AI: cắt đoạn chết"})
+    assert not result.is_error
+    assert json.loads(text_of(result))["created"] == {"0": [87, 88]}
+    assert bridge.calls == [("apply_operations", {"ops": ops, "base_revision": 1873402, "label": "AI: cắt đoạn chết"})]
+
+
+async def test_other_edit_tools_passthrough(mcp, bridge):
+    await mcp.call_tool("validate_operations", {"ops": [{"type": "split", "clip_id": 42, "at_f": 100}]})
+    await mcp.call_tool("add_markers", {"markers": [{"f": 3600, "comment": "Hook"}], "base_revision": 7})
+    await mcp.call_tool("undo_batch", {"batch_id": "b-1"})
+    await mcp.call_tool("list_operations", {})
+    await mcp.call_tool("list_sources", {})
+    assert bridge.calls == [
+        ("validate_operations", {"ops": [{"type": "split", "clip_id": 42, "at_f": 100}]}),
+        ("add_markers", {"markers": [{"f": 3600, "comment": "Hook"}], "base_revision": 7}),
+        ("undo_batch", {"batch_id": "b-1"}),
+        ("list_operations", None),
+        ("list_sources", {}),
+    ]
+
+
+async def test_apply_rejects_empty_batch_before_bridge(mcp, bridge):
+    result = await mcp.call_tool("apply_operations", {"ops": [], "base_revision": 1, "label": "AI: x"})
+    assert result.is_error and bridge.calls == []
+
+
+async def test_conflict_message(mcp, bridge):
+    bridge.responses["apply_operations"] = rpc_error(-32003, "conflict", "stale", current_revision=1873999)
+    result = await mcp.call_tool("apply_operations", {"ops": [{"type": "cut_range", "start_f": 0, "end_f": 5}],
+                                                      "base_revision": 1873402, "label": "AI: x"})
+    assert result.is_error
+    assert "1873999" in text_of(result) and "Không có gì bị đổi" in text_of(result)
+
+
+async def test_validation_failed_message(mcp, bridge):
+    bridge.responses["apply_operations"] = rpc_error(
+        -32006, "validation_failed", "1 invalid", errors=[{"op_index": 0, "field": "end_f", "message": "must be > 5"}])
+    result = await mcp.call_tool("apply_operations", {"ops": [{"type": "cut_range", "start_f": 5, "end_f": 5}],
+                                                      "base_revision": 1, "label": "AI: x"})
+    assert result.is_error and "op 0 (end_f): must be > 5" in text_of(result)
+
+
+async def test_apply_failed_message(mcp, bridge):
+    bridge.responses["apply_operations"] = rpc_error(-32007, "apply_failed", "op 1 failed", op_index=1, field="at_f",
+                                                     reason="V1 already has item 12")
+    result = await mcp.call_tool("apply_operations", {"ops": [{"type": "split", "clip_id": 1, "at_f": 2}] * 2,
+                                                      "base_revision": 1, "label": "AI: x"})
+    assert result.is_error
+    assert "op 1" in text_of(result) and "V1 already has item 12" in text_of(result) and "hoàn tác" in text_of(result)
+
+
+async def test_apply_not_resent_when_app_drops(mcp, bridge):
+    await mcp.call_tool("get_editor_state", {})
+    bridge.drop_once.add("apply_operations")
+    result = await mcp.call_tool("apply_operations", {"ops": [{"type": "cut_range", "start_f": 0, "end_f": 5}],
+                                                      "base_revision": 1, "label": "AI: x"})
+    assert result.is_error and "có thể đã được áp dụng" in text_of(result)
+    assert [m for m, _ in bridge.calls].count("apply_operations") == 1

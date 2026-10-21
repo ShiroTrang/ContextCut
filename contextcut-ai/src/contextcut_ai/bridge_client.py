@@ -3,7 +3,7 @@
 """Client WebSocket tới cầu nối AI của app ContextCut (docs/protocol.md §1, §3).
 
 Một kết nối, gửi tuần tự. Mỗi lần nối đọc lại `bridge.json` vì cổng và token đổi mỗi lần app chạy;
-kết nối rớt (app khởi động lại) thì nối lại và gửi lại đúng một lần.
+kết nối rớt (app khởi động lại) thì nối lại và gửi lại đúng một lần (lệnh sửa: chỉ khi app chắc chưa nhận).
 """
 
 from __future__ import annotations
@@ -46,19 +46,42 @@ class BridgeClient:
     def bridge_file(self) -> Path:
         return self._bridge_file or default_bridge_file()
 
-    async def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Gửi một request, trả `result`; lỗi của app thành `RpcError`, lỗi kết nối thành `BridgeError`."""
+    async def call(self, method: str, params: dict[str, Any] | None = None, *, resend: bool = True) -> dict[str, Any]:
+        """Gửi một request, trả `result`; lỗi của app thành `RpcError`, lỗi kết nối thành `BridgeError`.
+
+        Kết nối rớt thì nối lại và gửi lại một lần. Lệnh sửa (`resend=False`) chỉ gửi lại khi chắc app chưa nhận:
+        rớt sau khi đã gửi thì báo "có thể đã được áp dụng" thay vì áp dụng hai lần.
+        """
         async with self._lock:
+            if not resend:
+                await self._drop_if_dead()
             for attempt in range(2):
                 if self._ws is None:
                     await self._connect()
+                sent = [False]
                 try:
-                    return await self._request(method, params)
+                    return await self._request(method, params, sent)
                 except (ConnectionClosed, OSError) as e:
                     await self.close()
+                    if sent[0] and not resend:
+                        raise BridgeError(
+                            f"Kết nối tới ContextCut rớt sau khi đã gửi {method}: lệnh có thể đã được áp dụng. "
+                            "Gọi get_editor_state (xem undo.next_undo) hoặc get_timeline để kiểm tra trước khi gửi lại."
+                        ) from e
                     if attempt == 1:
                         raise BridgeUnavailable(f"kết nối tới app bị đóng: {e}") from e
         raise AssertionError("unreachable")
+
+    async def _drop_if_dead(self) -> None:
+        """Ping kết nối đang giữ (app có thể đã khởi động lại); chết thì bỏ để lệnh sửa đi trên kết nối mới."""
+        if self._ws is None:
+            return
+        try:
+            pong = await self._ws.ping()
+            async with asyncio.timeout(2):
+                await pong
+        except (ConnectionClosed, OSError, TimeoutError):
+            await self.close()
 
     async def close(self) -> None:
         ws, self._ws = self._ws, None
@@ -95,7 +118,7 @@ class BridgeClient:
             await self.close()
             raise BridgeUnavailable(f"app đóng kết nối lúc xác thực: {e}") from e
 
-    async def _request(self, method: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    async def _request(self, method: str, params: dict[str, Any] | None, sent: list[bool] | None = None) -> dict[str, Any]:
         assert self._ws is not None
         self._next_id += 1
         rid = self._next_id
@@ -103,6 +126,8 @@ class BridgeClient:
         if params is not None:
             msg["params"] = params
         await self._ws.send(json.dumps(msg, ensure_ascii=False))
+        if sent is not None:
+            sent[0] = True
         try:
             async with asyncio.timeout(self._call_timeout):
                 while True:

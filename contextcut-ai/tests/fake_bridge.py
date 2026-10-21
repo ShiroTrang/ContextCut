@@ -75,11 +75,37 @@ RECORDINGS = {
 }
 
 
+SOURCES = {
+    "revision": 1873402,
+    "sources": [
+        {"id": "4", "name": "Ông Sang câu con cá.mkv", "type": "av", "path": "D:/OBS/Ông Sang câu con cá.mkv",
+         "duration_f": 432000, "has_video": True, "has_audio": True, "ready": True, "on_timeline": True,
+         "recording": True},
+        {"id": "9", "name": "Can Can.mp3", "type": "audio", "path": "D:/Nhạc/Can Can.mp3", "duration_f": 9000,
+         "has_video": False, "has_audio": True, "ready": True, "on_timeline": False, "recording": False},
+    ],
+    "next_cursor": None,
+}
+
+OPERATIONS = {"ops": [{"type": "split", "summary": "Cut a clip in two",
+                       "params": {"clip_id": {"type": "clip", "required": True, "description": "id"},
+                                  "at_f": {"type": "frame", "required": True, "description": "frame", "min": 0}}}]}
+
+APPLIED = {"batch_id": "b-1", "revision": 1873460, "label": "AI: cắt đoạn chết", "created": {"0": [87, 88]},
+           "warnings": []}
+
+
 def default_responses() -> dict[str, Response]:
     return {
         "get_editor_state": copy.deepcopy(EDITOR_STATE),
         "get_timeline": copy.deepcopy(TIMELINE),
         "list_recordings": copy.deepcopy(RECORDINGS),
+        "list_sources": copy.deepcopy(SOURCES),
+        "list_operations": copy.deepcopy(OPERATIONS),
+        "validate_operations": {"ok": True, "errors": [], "warnings": []},
+        "apply_operations": copy.deepcopy(APPLIED),
+        "add_markers": {"batch_id": "b-2", "revision": 1873470, "added": 1},
+        "undo_batch": {"revision": 1873480, "undone": "AI: cắt đoạn chết"},
     }
 
 
@@ -91,6 +117,7 @@ class FakeBridge:
         self.responses: dict[str, Response] = default_responses() if responses is None else responses
         self.protocol = protocol
         self.silent = False  # True: nhận request nhưng không bao giờ trả lời (app treo)
+        self.drop_once: set[str] = set()  # method trong này: nhận request rồi đóng kết nối không trả lời (app crash), một lần
         self.connections = 0
         self.calls: list[tuple[str, dict[str, Any] | None]] = []
         self.auth_params: dict[str, Any] | None = None
@@ -154,6 +181,10 @@ class FakeBridge:
                 self.calls.append((method, params))
                 if self.silent:
                     continue
+                if method in self.drop_once:
+                    self.drop_once.discard(method)
+                    await ws.close()
+                    return
                 response = self.responses.get(method)
                 if response is None:
                     response = rpc_error(-32601, "method_not_found", f"unknown method {method}", method=method)

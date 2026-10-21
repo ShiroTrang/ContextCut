@@ -115,6 +115,32 @@ async def test_call_timeout(bridge):
     assert "không trả lời" in str(e.value)
 
 
+async def test_write_not_resent_after_send(bridge):
+    bridge.drop_once.add("apply_operations")
+    client = BridgeClient(bridge.path)
+    await client.call("get_editor_state")
+    with pytest.raises(BridgeError) as e:
+        await client.call("apply_operations", {"base_revision": 1, "label": "AI: x", "ops": []}, resend=False)
+    assert "có thể đã được áp dụng" in str(e.value) and "get_editor_state" in str(e.value)
+    assert [m for m, _ in bridge.calls].count("apply_operations") == 1
+
+
+async def test_write_reconnects_before_send_after_app_restart(bridge):
+    client = BridgeClient(bridge.path)
+    await client.call("get_editor_state")
+    await bridge.restart()
+    result = await client.call("apply_operations", {"base_revision": 1, "label": "AI: x", "ops": []}, resend=False)
+    assert result["batch_id"] == "b-1"
+    assert [m for m, _ in bridge.calls].count("apply_operations") == 1
+
+
+async def test_read_resent_after_drop(bridge):
+    bridge.drop_once.add("get_timeline")
+    client = BridgeClient(bridge.path)
+    assert (await client.call("get_timeline"))["revision"] == 1873402
+    assert [m for m, _ in bridge.calls].count("get_timeline") == 2
+
+
 def test_agent_message_kinds():
     def err(kind, **data):
         return RpcError({"code": -1, "message": "m", "data": {"kind": kind, **data}})
@@ -126,3 +152,13 @@ def test_agent_message_kinds():
     assert "limit" in agent_message(err("invalid_params", field="limit"))
     assert "V99" in agent_message(err("not_found", id="V99"))
     assert agent_message(BridgeUnavailable("x")) == "Mở ContextCut trước (x)"
+    conflict = agent_message(err("conflict", current_revision=99))
+    assert "99" in conflict and "Không có gì bị đổi" in conflict and "base_revision" in conflict
+    undo_conflict = agent_message(RpcError({"code": -32003, "message": "batch \"AI: x\" is not the latest undo step",
+                                            "data": {"kind": "conflict", "current_revision": 5}}))
+    assert "Ctrl+Z" in undo_conflict
+    invalid = agent_message(err("validation_failed", errors=[{"op_index": 0, "field": "start_f", "message": "bad"},
+                                                             {"op_index": -1, "field": "ops", "message": "empty"}]))
+    assert "chưa đổi gì" in invalid and "op 0 (start_f): bad" in invalid and "ops: empty" in invalid
+    failed = agent_message(err("apply_failed", op_index=2, field="at_f", reason="occupied"))
+    assert "op 2" in failed and "occupied" in failed and "hoàn tác" in failed

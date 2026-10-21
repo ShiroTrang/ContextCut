@@ -7,10 +7,11 @@ description: Dựng video gaming trong ContextCut (fork Kdenlive) qua MCP server
 
 # ContextCut editor
 
-ContextCut là app dựng video gaming (fork Kdenlive) của Nhan, dùng chung với vài người bạn. MCP server `contextcut` đọc timeline đang mở trong app; người dùng duyệt và chỉnh tay như với một người dựng phụ. Trả lời bằng tiếng Việt.
+ContextCut là app dựng video gaming (fork Kdenlive) của Nhan, dùng chung với vài người bạn. MCP server `contextcut` đọc và sửa timeline đang mở trong app; người dùng duyệt và chỉnh tay như với một người dựng phụ. Trả lời bằng tiếng Việt.
 
 - Gọi `get_editor_state` trước mọi việc. Thời gian là **frame nguyên** theo fps của project; mọi khoảng là nửa mở `[start_f, end_f)`.
-- Bản hiện tại (P1b) **chỉ đọc**: `get_editor_state`, `get_timeline`, `list_recordings`, `get_guide`. Chưa có tool sửa timeline, nghe lời thoại hay xem hình: đừng nói là đã cắt, đã sửa hay đã xem; đề xuất bằng chữ (mốc frame, timecode, lý do).
+- Sửa: đọc `revision` → `validate_operations` → `apply_operations(ops, base_revision, label "AI: …")`. Một đợt là một bước undo (Ctrl+Z hoàn tác cả đợt); người dùng sửa chen ngang thì bị từ chối (`conflict`): đọc lại rồi gửi lại. Op và tham số: `list_operations`; id nguồn (nhạc, bản ghi): `list_sources`.
+- Chỉ dựng phần người dùng đã duyệt; xong thì báo nhãn đợt và nhắc Ctrl+Z. Chưa nghe lời thoại hay xem hình (P2): đừng nói là đã nghe, đã xem.
 - Trước khi đề xuất dựng, đọc `get_guide("workflow")` và `get_guide("editing-rules")`; phong cách gaming: `get_guide("styles/gaming")`. Mục lục: `get_guide()`.
 - Không bịa lời thoại hay sự kiện chưa nghe hoặc chưa xem. Chỗ nào là suy đoán thì nói rõ.
 - Lỗi "Mở ContextCut trước (…)": app chưa chạy, chưa mở project hoặc đang nạp. Nhờ người dùng mở rồi gọi lại; đừng gọi lặp liên tục.
@@ -27,16 +28,25 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 | 2 | Phân tích | Lời thoại theo từ (track Mic, Discord), phản ứng, khoảng lặng, sự kiện game | `transcribe`, `get_transcript`, `find_moments` | P2–P3 |
 | 3 | Dàn ý | Danh sách đoạn: vai trò (hook, bối cảnh, thân, cao trào, "trong lúc đó", kết), khoảng thời gian trên bản ghi, POV, lý do một câu, kiểu dựng (thường, montage theo beat, cú cắt mỉa…), trạng thái | `get_outline`, `save_outline` | P3; trước đó viết dàn ý trong chat |
 | 4 | Duyệt | Người dùng đọc, sửa, duyệt dàn ý. Đoạn chưa duyệt thì chưa dựng | — | |
-| 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `validate_operations`, `apply_operations` | P1c |
+| 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `list_operations`, `validate_operations`, `apply_operations` | **bây giờ** |
 | 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | P2 |
 | 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2 |
 
 ### Bản hiện tại làm được gì
 
-- Đọc project đang mở: track, clip, composition, marker (guide), các bản ghi.
+- Đọc project đang mở: track, clip, composition, marker (guide), các bản ghi, mọi clip trong bin.
 - Trả lời câu hỏi về project ("timeline có gì", "bản ghi nào chưa dùng", "phút 12 là clip nào") bằng số liệu thật từ tool.
 - Đề xuất dàn ý **bằng chữ**. Chưa có transcript và hình, nên dàn ý chỉ dựa vào tên file, độ dài, marker, và lời người dùng kể. Nói rõ giới hạn đó.
-- Chưa sửa được timeline. Đừng nói "đã cắt". Ghi mốc frame kèm timecode để người dùng tự làm, hoặc để dựng khi có P1c.
+- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt, marker. Chưa có: zoom, hiệu ứng, phụ đề tự động, xem hình (P2 trở đi).
+
+### Một lần sửa
+
+1. `get_editor_state` (lấy `revision`, track) và `get_timeline` đúng khoảng sắp sửa; `list_sources` khi cần id nhạc hay bản ghi. Lần đầu: `list_operations`.
+2. Soạn đợt op theo đoạn đã duyệt; mỗi op cắt hay chuyển cảnh có `reason`. Mốc frame của op sau tính theo timeline sau op trước (`cut_range` làm dời mọi thứ phía sau).
+3. `validate_operations` nếu đợt phức tạp; sửa lỗi theo `op_index`/`field`.
+4. `apply_operations(ops, base_revision, label)`; nhãn ngắn, nói được việc: "AI: cắt đoạn chết 03:10–04:02".
+5. Báo người dùng: nhãn đợt, đã đổi gì (mốc timecode), cảnh báo nếu có, và "Ctrl+Z để hoàn tác". `conflict` thì đọc lại và hỏi lại nếu đoạn đó người dùng vừa sửa.
+6. Đợt sau dùng `revision` trả về làm `base_revision`.
 
 ### Đọc timeline cho gọn
 
@@ -55,7 +65,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 
 ### Chế độ Duyệt và Tự động
 
-- **Duyệt** (mặc định): mỗi đợt sửa chờ người dùng giữ hoặc hoàn tác. Trước P5 chưa có dock Hoạt động AI: người dùng xem Undo History của Kdenlive và Ctrl+Z.
+- **Duyệt** (mặc định): mỗi đợt sửa chờ người dùng giữ hoặc hoàn tác. Trước P5 chưa có dock Hoạt động AI: người dùng xem Undo History của Kdenlive và Ctrl+Z; agent tự hoàn tác đợt vừa làm bằng `undo_batch` khi người dùng bảo.
 - **Tự động**: chỉ khi người dùng bảo. Vẫn dừng hỏi khi cắt bỏ vượt ngưỡng hoặc trước khi xuất.
 
 ## Quy tắc biên tập
@@ -142,12 +152,38 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 - Sơ đồ OBS khuyến nghị: track 1 trộn chung (Discord + Game + Mic), 2 Mic của người quay, 3 Discord (giọng bạn bè), 4 âm thanh game, 5 Desktop Audio dự phòng.
 - `audio_streams[].index` là chỉ số stream MLT (đếm cả stream hình), nên OBS track 1 thường là `index: 1`. `name` là mô tả Kdenlive (`Stereo 48kHz aac`), chưa phải tên track OBS. `track_map` (P2) sẽ ghi track nào là Mic, Discord, Game.
 - `on_timeline`: bản ghi đã có clip trên timeline chưa. `ready: false`: Kdenlive chưa nạp xong clip.
+- `list_sources` liệt kê **mọi** clip trong bin (bản ghi, nhạc, SFX, ảnh, title): `id` là `source` của `insert_clip`/`add_music`. Nhạc chưa có trong bin thì nhờ người dùng kéo file vào ContextCut (P1 chưa có tool nhập file).
 
 ### Revision
 
 - Mọi kết quả đọc có `revision`. Khác lần trước nghĩa là timeline có thể đã đổi (người dùng sửa, undo, redo, đổi sequence hay project). Chỉ so bằng; giá trị không có thứ tự.
 - Chọn clip, dời playhead, zoom timeline không đổi `revision`.
-- Từ P1c, lệnh sửa gửi `base_revision` = `revision` vừa đọc. Người dùng sửa chen ngang thì lệnh bị từ chối (`conflict`), timeline không đổi gì: đọc lại rồi đề xuất lại.
+- Lệnh sửa gửi `base_revision` = `revision` vừa đọc. Người dùng sửa chen ngang thì lệnh bị từ chối (`conflict`), timeline không đổi gì: đọc lại rồi đề xuất lại.
+- `get_editor_state` có `undo`: `next_undo` là nhãn bước Ctrl+Z sẽ hoàn tác (đợt của agent mang nhãn `AI: …`).
+
+### Sửa timeline
+
+- Một lần `apply_operations` là **một đợt**: danh sách op chạy theo thứ tự, thành **một bước undo** nhãn `AI: …` (app tự thêm `AI: ` nếu thiếu). Ctrl+Z một lần hoàn tác cả đợt; `undo_batch(batch_id)` làm việc đó khi đợt còn là bước trên cùng.
+- Op sau thấy timeline đã bị op trước đổi: sau `cut_range`, mọi thứ phía sau dời sớm hơn đúng độ dài đã cắt. Tính mốc frame cho op sau theo timeline mới, hoặc tách thành đợt khác rồi đọc lại.
+- Một op lỗi thì cả đợt tự hoàn tác (`apply_failed` kèm `op_index`); tham số sai thì không đổi gì (`validation_failed`). `validate_operations` kiểm trước mà không đổi gì.
+- Kết quả: `batch_id`, `revision` mới (dùng làm `base_revision` cho đợt sau, khỏi đọc lại), `created` (id clip mới theo chỉ số op), `warnings` (đọc và báo người dùng).
+- Ghi `reason` một câu cho mỗi op cắt hay chuyển cảnh.
+
+| Op | Tham số | Việc |
+| --- | --- | --- |
+| `cut_range` | `start_f`, `end_f` | Cắt bỏ khoảng trên mọi track không khoá, kéo phần sau lên (ripple); marker sau khoảng dời theo. Track khoá thì lệch đồng bộ (có cảnh báo) |
+| `split` | `clip_id`, `at_f` | Cắt clip (cả clip cặp `linked`) làm đôi; `created` = nửa sau |
+| `trim` | `clip_id`, `start_f?`, `end_f?` | Đặt mép mới trên timeline; điểm vào nguồn dời theo mép trái |
+| `move` | `clip_id`, `at_f`, `track?` | Dời clip (cả clip cặp) tới `at_f`; chỗ đích phải trống |
+| `insert_clip` | `source`, `in_f`, `out_f`, `track`, `at_f`, `audio_track?`, `audio_stream?`, `audio?` | Đặt khoảng nguồn `[in_f, out_f)` vào chỗ trống. Track video: hình lên `track`, tiếng xuống `audio_track` (mặc định track audio đối xứng), stream `audio_stream` (chỉ số như `list_recordings`, mặc định stream mặc định); track audio: chỉ tiếng |
+| `add_music` | `source`, `at_f`, `in_f?`, `out_f?`, `track?`, `gain_db?` | Phần tiếng của nguồn lên track `Nhạc`/`Music` (hoặc `track`), `gain_db` -60…20 |
+| `title_card` | `text`, `start_f`, `end_f`, `track?`, `style?` | Thẻ chữ toàn màn hình (`black` nền đen, `dim` nền mờ), vd. "Trong lúc đó:" |
+| `caption` | `text`, `start_f`, `end_f`, `speaker?`, `track?`, `style?` | Câu đắt chữ viền đen (`bottom`, `top`) hoặc vàng to (`pop`) |
+
+- Track nhận id, tag (`V2`) hoặc tên track. Chữ mặc định lên track tên `Chữ`/`Text`/`Title`, không có thì track video trên cùng (có cảnh báo).
+- Chèn và dời chỉ vào chỗ trống: cần chỗ thì `cut_range`/`move` trước, trong cùng đợt.
+- `add_markers(markers, base_revision)` thêm marker (`f`, `comment`, `category`) để chỉ chỗ cho người dùng xem: một bước undo riêng.
+
 
 ### Phân trang
 
@@ -164,6 +200,10 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | "Mở ContextCut trước (…)" | App chưa chạy, chưa mở project (màn hình chào, hộp File Recovery) hoặc đang nạp | Nhờ người dùng mở; gọi lại sau; không gọi lặp |
 | "không trả lời sau … giây" | App đang bận, đang mở hộp thoại, hoặc treo | Nhờ người dùng xem app |
 | `stale_cursor` | Timeline đổi giữa hai trang | Đọc lại từ trang đầu |
+| "Timeline đã đổi từ lúc đọc" (`conflict`) | Người dùng vừa sửa, undo, hoặc đợt khác đã áp dụng; không có gì bị đổi | Đọc lại `get_timeline`, gửi lại với `base_revision` mới |
+| "Đợt sửa không hợp lệ" (`validation_failed`) | Tham số sai; không có gì bị đổi | Sửa theo từng dòng `op <i> (<trường>)` |
+| "op <i> lỗi khi áp dụng" (`apply_failed`) | Op đó không làm được trên timeline lúc tới lượt; cả đợt đã hoàn tác | Đọc lại, sửa op đó rồi gửi lại |
+| "có thể đã được áp dụng" | Kết nối rớt sau khi gửi lệnh sửa | Xem `get_editor_state` (`undo.next_undo`) trước khi gửi lại, tránh áp dụng hai lần |
 | Tham số sai | Sai kiểu hoặc ngoài khoảng | Sửa tham số |
 | Không có `…` | Track hay clip không tồn tại | Xem lại `get_editor_state` |
 
@@ -175,7 +215,11 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `get_timeline` | Clip, composition, marker trong một khoảng; phân trang | **bây giờ** |
 | `list_recordings` | Bản ghi của project: id, file, hash, độ dài, stream audio, đã lên timeline chưa | **bây giờ** |
 | `get_guide` | Đọc hướng dẫn này theo topic | **bây giờ** |
-| `list_operations`, `validate_operations`, `apply_operations`, `add_markers` | Sửa timeline, mỗi đợt một bước undo nhãn `AI: …`; op `cut_range`, `split`, `trim`, `move`, `insert_clip`, `add_music`, `title_card`, `caption` | P1c |
+| `list_sources` | Mọi clip trong bin (nhạc, ảnh, title, bản ghi): id làm `source` | **bây giờ** |
+| `list_operations`, `validate_operations` | Danh mục op + schema; kiểm một đợt không đổi gì | **bây giờ** |
+| `apply_operations` | Sửa timeline, mỗi đợt một bước undo nhãn `AI: …`; op `cut_range`, `split`, `trim`, `move`, `insert_clip`, `add_music`, `title_card`, `caption` | **bây giờ** |
+| `add_markers`, `undo_batch` | Thêm marker; hoàn tác đợt vừa áp dụng | **bây giờ** |
+| `open_project`, `import_media` | Mở project, nhập file vào bin | P2 |
 | `transcribe`, `get_transcript`, `get_context`, `get_job` | Lời thoại theo từ, sự kiện | P2 |
 | `get_contact_sheet`, `get_source_frames`, `render_frames`, `get_viewer_frame` | Xem hình | P2 |
 | `export`, `zoom` | Xuất file; zoom phản ứng | P2 |

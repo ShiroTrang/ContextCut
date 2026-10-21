@@ -46,6 +46,27 @@ def agent_message(e: Exception) -> str:
         case "invalid_params":
             return f"Tham số sai ({e.data.get('field')}): {e.message}"
         case "not_found":
-            return f"Không có {e.data.get('id')!r} trong timeline. Gọi get_editor_state để xem id và tag của track."
+            return (f"Không có {e.data.get('id')!r} ({e.message}). "
+                    "Gọi get_editor_state/get_timeline để xem id hiện tại của track và clip.")
+        case "conflict" if "undo step" in e.message:
+            return (f"Đợt đó không còn là bước undo trên cùng nên không hoàn tác tự động ({e.message}). "
+                    "Nếu vẫn cần, nhờ người dùng Ctrl+Z trong app (Undo History).")
+        case "conflict":
+            return (f"Timeline đã đổi từ lúc đọc: người dùng vừa sửa tay, undo, hoặc đợt khác đã áp dụng "
+                    f"(revision hiện tại {e.data.get('current_revision')}). Không có gì bị đổi. "
+                    "Đọc lại get_timeline rồi gửi lại đợt sửa với base_revision mới.")
+        case "validation_failed":
+            lines = []
+            for err in e.data.get("errors") or []:
+                where = f"op {err.get('op_index')}" if err.get("op_index", -1) >= 0 else ""
+                field = err.get("field") or ""
+                label = f"{where} ({field})" if where and field else (where or field)
+                lines.append(f"- {label}: {err.get('message')}")
+            body = "\n".join(lines or [f"- {e.message}"])
+            return f"Đợt sửa không hợp lệ, chưa đổi gì:\n{body}\nSửa tham số (xem list_operations) rồi gửi lại."
+        case "apply_failed":
+            field = f" ({e.data['field']})" if e.data.get("field") else ""
+            return (f"op {e.data.get('op_index')}{field} lỗi khi áp dụng: {e.data.get('reason')}. "
+                    "Cả đợt đã hoàn tác, timeline như cũ. Đọc lại timeline nếu cần rồi gửi lại.")
         case _:
             return f"ContextCut báo lỗi {e.code} {e.kind}: {e.message}"

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 ContextCut contributors
 # SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
-"""MCP server stdio `contextcut-ai`: tool đọc timeline qua cầu nối, guide qua instructions/prompt/resource/tool."""
+"""MCP server stdio `contextcut-ai`: tool đọc và sửa timeline qua cầu nối, guide qua instructions/prompt/resource/tool."""
 
 from __future__ import annotations
 
@@ -20,6 +20,25 @@ from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+# Sửa được hoàn tác (Ctrl+Z) nhưng có thể xoá clip khỏi timeline
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
+ADDITIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+
+OPS_SUMMARY = (
+    "Op (frame nguyên, khoảng nửa mở, mọi op nhận reason): "
+    "cut_range{start_f,end_f} cắt bỏ khoảng trên mọi track không khoá và kéo phần sau lên; "
+    "split{clip_id,at_f}; trim{clip_id,start_f?,end_f?} mép mới trên timeline; move{clip_id,at_f,track?}; "
+    "insert_clip{source,in_f,out_f,track,at_f,audio_track?,audio_stream?,audio?} vào chỗ trống; "
+    "add_music{source,at_f,in_f?,out_f?,track?,gain_db?}; "
+    "title_card{text,start_f,end_f,track?,style=black|dim} thẻ chữ toàn màn hình; "
+    "caption{text,start_f,end_f,speaker?,track?,style=bottom|top|pop}. "
+    "Clip có tiếng đi cặp (linked) được cắt/dời cùng. Schema đầy đủ: list_operations."
+)
+
+# Ở mức module: `from __future__ import annotations` khiến pydantic tra chú thích kiểu trong globals
+OpList = Annotated[list[dict[str, Any]], Field(min_length=1, max_length=200,
+                                               description='Các op chạy theo thứ tự, vd. [{"type": "split", '
+                                                           '"clip_id": 42, "at_f": 300, "reason": "…"}]')]
 
 
 def compact(value: Any) -> str:
@@ -41,17 +60,24 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     server = MCPServer("contextcut", title="ContextCut", version=__version__, instructions=guide.instructions(),
                        log_level="WARNING", lifespan=lifespan)
 
-    def read_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
-        # docstring gom về một dòng: mô tả tool nằm trong context của agent ở mọi lượt
-        server.add_tool(fn, description=" ".join((fn.__doc__ or "").split()), structured_output=False,
-                        annotations=READ_ONLY)
-        return fn
+    def tool(annotations: ToolAnnotations, extra: str = "") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            # docstring gom về một dòng: mô tả tool nằm trong context của agent ở mọi lượt
+            description = " ".join(((fn.__doc__ or "") + " " + extra).split())
+            server.add_tool(fn, description=description, structured_output=False, annotations=annotations)
+            return fn
+        return register
 
-    async def call(method: str, params: dict[str, Any] | None = None) -> str:
+    read_tool = tool(READ_ONLY)
+
+    async def call(method: str, params: dict[str, Any] | None = None, *, resend: bool = True) -> str:
         try:
-            return compact(await bridge.call(method, params))
+            return compact(await bridge.call(method, params, resend=resend))
         except (BridgeError, RpcError) as e:
             raise ToolError(agent_message(e)) from e
+
+    def present(**params: Any) -> dict[str, Any]:
+        return {k: v for k, v in params.items() if v is not None}
 
     @read_tool
     async def get_editor_state() -> str:
@@ -71,8 +97,8 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         """Clip, composition và marker (guides) của sequence đang mở, lấy các item giao với khoảng nửa mở
         [start_f, end_f), sắp theo start_f rồi thứ tự track. Thời gian là frame theo fps project.
         Còn trang thì next_cursor khác null."""
-        params = {"start_f": start_f, "end_f": end_f, "tracks": tracks, "limit": limit, "cursor": cursor}
-        return await call("get_timeline", {k: v for k, v in params.items() if v is not None})
+        return await call("get_timeline",
+                          present(start_f=start_f, end_f=end_f, tracks=tracks, limit=limit, cursor=cursor))
 
     @read_tool
     async def list_recordings(
@@ -81,8 +107,62 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     ) -> str:
         """Các bản ghi (video nguồn, thường là file OBS) của project: id ổn định, đường dẫn, hash, độ dài theo frame
         project, fps nguồn, kích thước, stream audio, đã lên timeline chưa."""
-        params = {"limit": limit, "cursor": cursor}
-        return await call("list_recordings", {k: v for k, v in params.items() if v is not None})
+        return await call("list_recordings", present(limit=limit, cursor=cursor))
+
+    @read_tool
+    async def list_sources(
+        limit: Annotated[int | None, Field(ge=1, le=500, description="Số clip tối đa mỗi trang (mặc định 100)")] = None,
+        cursor: Annotated[str | None, Field(description="next_cursor của trang trước")] = None,
+    ) -> str:
+        """Mọi clip trong bin (bản ghi, nhạc, SFX, ảnh, title…): id dùng làm source cho insert_clip/add_music, tên,
+        loại, đường dẫn, độ dài theo frame project (null nếu không giới hạn), có hình/tiếng, đã nạp xong chưa."""
+        return await call("list_sources", present(limit=limit, cursor=cursor))
+
+    @read_tool
+    async def list_operations() -> str:
+        """Danh mục op sửa timeline và schema tham số (kiểu, bắt buộc, khoảng, mặc định). Đọc trước lần sửa đầu."""
+        return await call("list_operations")
+
+    @tool(READ_ONLY, OPS_SUMMARY)
+    async def validate_operations(ops: OpList) -> str:
+        """Kiểm một đợt op với timeline hiện tại, không đổi gì: ok, errors (op_index, field, message), warnings.
+        Op đứng sau một op làm đổi timeline chỉ được kiểm gần đúng (apply kiểm lại đúng lúc)."""
+        return await call("validate_operations", {"ops": ops})
+
+    @tool(DESTRUCTIVE, OPS_SUMMARY)
+    async def apply_operations(
+        ops: OpList,
+        base_revision: Annotated[int, Field(ge=0, description="revision vừa đọc từ get_editor_state/get_timeline")],
+        label: Annotated[str, Field(min_length=1, max_length=200,
+                                    description='Tên bước undo người dùng thấy, vd. "AI: cắt đoạn chết 03:10–04:02"')],
+        reason: Annotated[str | None, Field(max_length=500, description="Lý do một câu cho cả đợt")] = None,
+    ) -> str:
+        """Sửa timeline đang mở: cả đợt là MỘT bước undo nhãn "AI: …" (Ctrl+Z hoàn tác cả đợt). Người dùng sửa chen
+        ngang (revision khác base_revision) thì bị từ chối, không đổi gì. Op nào lỗi thì cả đợt tự hoàn tác.
+        Trả batch_id (cho undo_batch), revision mới, created (id clip mới theo op), warnings."""
+        return await call("apply_operations", present(ops=ops, base_revision=base_revision, label=label, reason=reason),
+                          resend=False)
+
+    @tool(ADDITIVE)
+    async def add_markers(
+        markers: Annotated[list[dict[str, Any]], Field(min_length=1, max_length=500,
+                                                       description='[{"f": 43380, "comment": "phản ứng", "category": 2}]; '
+                                                                   "category bỏ trống = loại mặc định")],
+        base_revision: Annotated[int, Field(ge=0, description="revision vừa đọc")],
+        label: Annotated[str | None, Field(min_length=1, max_length=200,
+                                           description='Tên bước undo, mặc định "AI: thêm marker"')] = None,
+    ) -> str:
+        """Thêm guide (marker) trên timeline để chỉ chỗ cho người dùng xem: một bước undo. Không đổi clip."""
+        return await call("add_markers", present(markers=markers, base_revision=base_revision, label=label),
+                          resend=False)
+
+    @tool(DESTRUCTIVE)
+    async def undo_batch(
+        batch_id: Annotated[str, Field(min_length=1, description="batch_id do apply_operations/add_markers trả")],
+    ) -> str:
+        """Hoàn tác đợt sửa của chính mình, chỉ khi nó còn là bước undo trên cùng (như Ctrl+Z một lần).
+        Người dùng đã sửa thêm thì bị từ chối: nhờ người dùng tự hoàn tác."""
+        return await call("undo_batch", {"batch_id": batch_id}, resend=False)
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,
@@ -121,7 +201,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             "3. Tóm tắt project cho tôi: bản ghi, độ dài, track, marker, chỗ playhead/vùng chọn.\n"
             "4. Đề xuất dàn ý theo workflow: mỗi đoạn có vai trò, khoảng thời gian (frame + timecode), "
             "lý do một câu, kiểu dựng. Chỗ nào là đoán (chưa nghe, chưa xem) thì nói rõ.\n"
-            "5. Dừng ở dàn ý, chờ tôi duyệt. Chưa có tool sửa thì không nói là đã dựng.\n"
+            "5. Dừng ở dàn ý, chờ tôi duyệt. Chỉ dựng (apply_operations, nhãn AI: …) phần tôi đã duyệt.\n"
             f"Video tôi muốn: {goal or '(chưa nói: hỏi tôi muốn video thế nào)'}"
         )
 
