@@ -214,7 +214,8 @@ bool addMusic(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, 
     if (gain == 0) {
         return true;
     }
-    // Kdenlive's "Volume" effect (data/effects/volume.xml, level in dB), added the way pasted effects are
+    // Kdenlive's "Volume" effect (data/effects/volume.xml, level in dB), added the way pasted effects are. "level" is keyframable,
+    // so it must be an MLT animation string: one keyframe at the clip's first frame (a bare number would be read as empty)
     QDomDocument doc;
     QDomElement effects = doc.createElement(QStringLiteral("effects"));
     effects.setAttribute(QStringLiteral("parentIn"), timeline->getClipIn(clip));
@@ -222,7 +223,7 @@ bool addMusic(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, 
     effect.setAttribute(QStringLiteral("id"), QStringLiteral("volume"));
     QDomElement level = doc.createElement(QStringLiteral("property"));
     level.setAttribute(QStringLiteral("name"), QStringLiteral("level"));
-    level.appendChild(doc.createTextNode(QString::number(gain)));
+    level.appendChild(doc.createTextNode(QStringLiteral("0=%1").arg(gain)));
     effect.appendChild(level);
     effects.appendChild(effect);
     doc.appendChild(effects);
