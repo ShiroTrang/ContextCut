@@ -5,6 +5,7 @@
 
 #include "aibridgeserver.h"
 #include "contextcut/model/editorreader.h"
+#include "contextcut/ops/batchapplier.h"
 #include "revisiontracker.h"
 
 #include <QCoreApplication>
@@ -79,6 +80,7 @@ AiBridgeServer *AiBridgeServer::start(QObject *parent)
         return nullptr;
     }
     EditorReader::registerReadOnlyMethods(*server);
+    BatchApplier::registerMethods(*server);
     s_instance = server;
     return server;
 }

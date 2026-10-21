@@ -9,4 +9,9 @@ set(kdenlive_SRCS
   contextcut/bridge/jsonrpc.cpp
   contextcut/bridge/revisiontracker.cpp
   contextcut/model/editorreader.cpp
+  contextcut/ops/batchapplier.cpp
+  contextcut/ops/opregistry.cpp
+  contextcut/ops/opvalidator.cpp
+  contextcut/ops/timelineops.cpp
+  contextcut/ops/titleclip.cpp
   PARENT_SCOPE)

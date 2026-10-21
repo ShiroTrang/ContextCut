@@ -12,6 +12,7 @@
 #include "contextcut/bridge/aibridgeserver.h"
 #include "contextcut/bridge/revisiontracker.h"
 #include "core.h"
+#include "doc/docundostack.hpp"
 #include "doc/kdenlivedoc.h"
 #include "effects/effectstack/model/effectstackmodel.hpp"
 #include "lib/audio/audioStreamInfo.h"
@@ -253,6 +254,12 @@ std::shared_ptr<TimelineItemModel> activeTimeline(JsonRpc::RpcError &error)
     return timeline;
 }
 
+QString undoLabel(const QString &text)
+{
+    static const QRegularExpression time(QStringLiteral("^\\d\\d:\\d\\d "));
+    return QString(text).remove(time);
+}
+
 QJsonArray tracks(const std::shared_ptr<TimelineItemModel> &timeline)
 {
     QJsonArray list;
@@ -311,6 +318,11 @@ JsonRpc::RpcResult editorState(qint64 revision, const QString &session)
                              {QStringLiteral("guides"), guides ? guides->rowCount() : 0},
                              {QStringLiteral("subtitles"), subtitles},
                              {QStringLiteral("recordings"), int(recordingClips().size())}};
+    const auto undoStack = doc->commandStack();
+    const QJsonObject undo{{QStringLiteral("index"), undoStack->index()},
+                           {QStringLiteral("count"), undoStack->count()},
+                           {QStringLiteral("next_undo"), undoStack->canUndo() ? QJsonValue(undoLabel(undoStack->undoText())) : QJsonValue(QJsonValue::Null)},
+                           {QStringLiteral("next_redo"), undoStack->canRedo() ? QJsonValue(undoLabel(undoStack->redoText())) : QJsonValue(QJsonValue::Null)}};
 
     return JsonRpc::RpcResult::ok(QJsonObject{
         {QStringLiteral("session"), session},
@@ -324,6 +336,7 @@ JsonRpc::RpcResult editorState(qint64 revision, const QString &session)
         {QStringLiteral("selection"), QJsonObject{{QStringLiteral("items"), selection}, {QStringLiteral("zone"), zone}}},
         {QStringLiteral("tracks"), tracks(timeline)},
         {QStringLiteral("counts"), counts},
+        {QStringLiteral("undo"), undo},
     });
 }
 
@@ -513,6 +526,50 @@ JsonRpc::RpcResult recordings(const QJsonObject &params, qint64 revision)
                                               {QStringLiteral("next_cursor"), nextCursor(revision, offset, limit, total)}});
 }
 
+JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision)
+{
+    JsonRpc::RpcError error;
+    if (!activeTimeline(error)) {
+        return JsonRpc::RpcResult::fail(error);
+    }
+    qint64 offset = 0;
+    qint64 limit = 0;
+    if (!readPage(params, revision, RecordingPageDefault, RecordingPageMax, offset, limit, error)) {
+        return JsonRpc::RpcResult::fail(error);
+    }
+    const auto model = pCore->projectItemModel();
+    QList<std::shared_ptr<ProjectClip>> clips;
+    for (const QString &binId : model->getAllClipIds()) {
+        if (auto clip = model->getClipByBinID(binId)) {
+            clips << clip;
+        }
+    }
+    std::sort(clips.begin(), clips.end(), [](const auto &a, const auto &b) { return a->clipId().toInt() < b->clipId().toInt(); });
+    const qint64 total = clips.size();
+    if (offset > total) {
+        return JsonRpc::RpcResult::fail(JsonRpc::staleCursor(revision));
+    }
+    QJsonArray list;
+    for (qint64 i = offset; i < std::min(total, offset + limit); ++i) {
+        const auto &clip = clips.at(i);
+        list.append(QJsonObject{
+            {QStringLiteral("id"), clip->clipId()},
+            {QStringLiteral("name"), clip->clipName()},
+            {QStringLiteral("type"), clipTypeName(clip->clipType())},
+            {QStringLiteral("path"), nullIfEmpty(clip->url())},
+            {QStringLiteral("duration_f"), clip->hasLimitedDuration() ? QJsonValue(qint64(clip->frameDuration())) : QJsonValue(QJsonValue::Null)},
+            {QStringLiteral("has_video"), clip->hasVideo()},
+            {QStringLiteral("has_audio"), clip->hasAudio()},
+            {QStringLiteral("ready"), clip->statusReady()},
+            {QStringLiteral("on_timeline"), clip->isIncludedInTimeline()},
+            {QStringLiteral("recording"), isRecording(clip->clipType())},
+        });
+    }
+    return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("revision"), revision},
+                                              {QStringLiteral("sources"), list},
+                                              {QStringLiteral("next_cursor"), nextCursor(revision, offset, limit, total)}});
+}
+
 void registerReadOnlyMethods(AiBridgeServer &server)
 {
     AiBridgeServer *bridge = &server;
@@ -521,6 +578,7 @@ void registerReadOnlyMethods(AiBridgeServer &server)
     server.registerMethod(QStringLiteral("get_timeline"), [bridge](const QJsonObject &params) { return timelinePage(params, bridge->revisions()->current()); });
     server.registerMethod(QStringLiteral("list_recordings"),
                           [bridge](const QJsonObject &params) { return recordings(params, bridge->revisions()->current()); });
+    server.registerMethod(QStringLiteral("list_sources"), [bridge](const QJsonObject &params) { return sources(params, bridge->revisions()->current()); });
 }
 
 } // namespace ContextCut::EditorReader

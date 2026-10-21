@@ -1,10 +1,10 @@
 # Giao thức cầu nối ContextCut (AI Bridge) — v1
 
-21/10/2026 · trạng thái: **hợp đồng cho P1** (P1a cài, P1b và P1c dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
+21/10/2026, cập nhật 22/10/2026 (P1c) · trạng thái: **hợp đồng cho P1** (P1a và P1c cài, P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
 
 App ContextCut (C++) mở một server WebSocket cục bộ. Dịch vụ Python `contextcut-ai` (MCP server) là client duy nhất dự kiến; AI client (Claude, Codex, Antigravity) không nói chuyện thẳng với cầu nối. Tài liệu này là hợp đồng giữa hai bên: đổi thứ gì ở đây thì tăng `protocol` hoặc ghi rõ là trường mới không bắt buộc.
 
-Ký hiệu: **[P1a]** đã cài ở P1a; **[P1c]** bản nháp, P1c được chỉnh chi tiết nhưng giữ các trường đã ghi.
+Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026).
 
 ## 1. Tìm app và kết nối
 
@@ -69,11 +69,11 @@ Mỗi frame text là một object JSON-RPC 2.0. Không hỗ trợ batch (mảng)
 | -32603 | `internal_error` | Lỗi trong app | |
 | -32001 | `unauthorized` | Chưa `auth` hoặc token sai | |
 | -32002 | `no_project` | Chưa có project/timeline nào mở | |
-| -32003 | `conflict` | `base_revision` khác revision hiện tại **[P1c]** | `current_revision` |
+| -32003 | `conflict` | `base_revision` khác revision hiện tại; `undo_batch` khi đợt không còn là bước undo trên cùng **[P1c]** | `current_revision` |
 | -32004 | `stale_cursor` | `cursor` thuộc revision cũ hoặc sai dạng | `current_revision` |
 | -32005 | `busy` | Project đang nạp hoặc đang đóng | |
 | -32006 | `validation_failed` | Ops không hợp lệ, chưa đổi gì **[P1c]** | `errors[]` |
-| -32007 | `apply_failed` | Một op lỗi giữa chừng, cả đợt đã hoàn tác **[P1c]** | `op_index`, `reason` |
+| -32007 | `apply_failed` | Một op lỗi giữa chừng, cả đợt đã hoàn tác **[P1c]** | `op_index`, `field`, `reason` |
 | -32008 | `not_found` | Id clip/track/sequence không tồn tại | `id` |
 
 Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429` quá số kết nối.
@@ -107,10 +107,12 @@ Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429
 | `get_editor_state` | Project, fps, playhead, chọn, revision, tóm tắt track | P1a |
 | `get_timeline` | Track, clip, composition, guide trong một khoảng; phân trang | P1a |
 | `list_recordings` | Các bản ghi (nguồn video) của project; phân trang | P1a |
+| `list_sources` | Mọi clip trong bin (bản ghi, nhạc, ảnh, title…) để chọn `source`; phân trang | P1c |
 | `list_operations` | Danh mục op + schema tham số | P1c |
 | `validate_operations` | Kiểm một đợt op, không đổi gì | P1c |
 | `apply_operations` | Một đợt op = một bước undo có nhãn | P1c |
 | `add_markers` | Thêm guide/marker để Nhan xem | P1c |
+| `undo_batch` | Hoàn tác đợt vừa áp dụng (khi còn là bước undo trên cùng) | P1c |
 
 ### 8.1 `auth` [P1a]
 
@@ -148,12 +150,14 @@ Không có tham số. Không có project → `no_project`; đang nạp/đóng �
   "tracks": [
     {"id": 5, "tag": "V1", "name": "Video", "kind": "video", "locked": false, "muted": false, "hidden": false, "items": 12}
   ],
-  "counts": {"clips": 24, "compositions": 0, "guides": 3, "subtitles": 0, "recordings": 2}
+  "counts": {"clips": 24, "compositions": 0, "guides": 3, "subtitles": 0, "recordings": 2},
+  "undo": {"index": 12, "count": 12, "next_undo": "AI: cắt đoạn chết 03:10–04:02", "next_redo": null}
 }
 ```
 
 - `project.path` là `null` khi project chưa lưu lần nào; khi đó `companion_dir` cũng `null`. `companion_dir` là chỗ dữ liệu AI sẽ nằm (`MyVideo.contextcut/`), P1a chỉ báo đường dẫn, không tạo.
 - `selection.zone` là vùng in/out của timeline; `null` khi chưa đặt (in = out = 0).
+- `undo` **[P1c]**: undo stack của project — `index` (số bước đang áp dụng), `count`, `next_undo`/`next_redo` là nhãn bước Ctrl+Z / Ctrl+Shift+Z sẽ chạy (`null` nếu không có; Undo History của Kdenlive hiện thêm giờ `hh:mm` phía trước, ở đây đã bỏ). Đợt của AI có nhãn `AI: …`.
 - `tracks[].items` là số clip + composition trên track. `hidden` chỉ có nghĩa với track video (đã tắt hình), `muted` chỉ với track audio (đã tắt tiếng); với track loại kia luôn `false`.
 
 ### 8.3 `get_timeline` [P1a]
@@ -223,24 +227,95 @@ Tham số: `limit` (1…500, mặc định 100), `cursor`.
 - Composition: `name` là tên hiển thị, `asset` là id asset Kdenlive (`luma`, `qtblend`…).
 - `track_map` (P2: track nào là Mic/Discord/Game) và `day_start` (P7) là `null` cho tới khi các giai đoạn đó lưu chúng vào `MyVideo.contextcut/recordings.json`.
 
-### 8.5 `list_operations`, `validate_operations`, `apply_operations` [P1c]
+### 8.4b `list_sources` [P1c]
+
+Như `list_recordings` (`limit` 1…500, mặc định 100, `cursor`) nhưng gồm **mọi** clip trong bin, không có thư mục: nguồn cho `insert_clip`/`add_music` (nhạc, SFX, ảnh, title, bản ghi).
+
+```json
+{"revision": 1873402,
+ "sources": [{"id": "9", "name": "Can Can.mp3", "type": "audio", "path": "D:/Nhạc/Can Can.mp3", "duration_f": 9000,
+              "has_video": false, "has_audio": true, "ready": true, "on_timeline": false, "recording": false}],
+ "next_cursor": null}
+```
+
+`duration_f` là `null` với nguồn không giới hạn độ dài (màu, ảnh tĩnh kéo dài tuỳ ý); `recording` như định nghĩa ở §8.4.
+
+### 8.5 Sửa timeline: `list_operations`, `validate_operations`, `apply_operations` [P1c]
+
+Một **đợt** là danh sách op chạy theo thứ tự trên sequence đang mở. Op sau thấy timeline đã bị op trước đổi (vd. sau `cut_range` mọi clip phía sau đã dời sớm hơn).
 
 ```json
 {"method": "apply_operations",
  "params": {"base_revision": 1873402, "label": "AI: cắt đoạn chết 03:10–04:02",
             "reason": "đoạn đi đường không có thoại",
-            "ops": [{"type": "cut_range", "start_f": 11400, "end_f": 14520}]}}
+            "ops": [{"type": "cut_range", "start_f": 11400, "end_f": 14520, "reason": "im lặng 52 giây"}]}}
 ```
 
-- `label` bắt buộc, bắt đầu bằng `"AI: "` (app tự thêm nếu thiếu); là tên bước undo trong lịch sử Kdenlive.
-- Kết quả: `{"batch_id": "…", "revision": <mới>, "created": {"<op_index>": [id…]}}`.
-- **Một đợt = một bước undo.** Mọi op của đợt gom `Fun undo/redo` rồi `pCore->pushUndo` đúng một lần. Op nào lỗi → chạy `undo` đã gom, timeline về y hệt, trả `apply_failed` kèm `op_index`.
-- `validate_operations(ops)` cùng tham số trừ `base_revision`/`label`, trả `{"ok": bool, "errors": [{"op_index", "field", "message"}], "warnings": [...]}`, không đổi gì.
-- Op P1: `cut_range`, `split`, `trim`, `move`, `insert_clip`, `add_music`, `title_card`, `caption` (bản đơn giản). Tham số theo design §9 và Kiến trúc v3 "Timeline và thao tác"; schema chốt ở P1c và trả qua `list_operations`.
+Kết quả:
+
+```json
+{"batch_id": "5f0c…", "revision": 1873460, "label": "AI: cắt đoạn chết 03:10–04:02", "created": {}, "warnings": []}
+```
+
+- `base_revision` (bắt buộc): `revision` vừa đọc. Khác revision hiện tại → `conflict` kèm `current_revision`, **không đổi gì**. Kiểm trước mọi thứ khác (kể cả kiểm tham số).
+- `label` (bắt buộc, 1…200 ký tự): tên bước undo trong Undo History; app thêm `"AI: "` nếu thiếu. `reason` (không bắt buộc, ≤ 500 ký tự) ở cả đợt và từng op: lý do một câu, P5 hiện trong dock Hoạt động AI.
+- `ops`: 1…200 op. Trường lạ trong op bị bỏ qua kèm cảnh báo (dễ thấy gõ sai tên trường).
+- **Một đợt = một bước undo.** Mọi op gom `Fun undo/redo` rồi `pCore->pushUndo` đúng một lần. Ctrl+Z một lần hoàn tác cả đợt.
+- Tham số sai kiểu/khoảng (kiểm trước khi chạy) → `validation_failed`, `data.errors = [{"op_index", "field", "message"}]`, không đổi gì.
+- Op lỗi khi chạy (kiểm theo trạng thái lúc tới lượt op đó, hoặc hàm Kdenlive từ chối) → hoàn tác mọi op trước của đợt, trả `apply_failed` kèm `op_index`, `field`, `reason`; undo stack không thêm bước nào.
+- `created`: id clip mới theo chỉ số op (`{"3": [87, 88]}`): clip nửa sau của `split`, clip hình + tiếng của `insert_clip`, clip của `add_music`/`title_card`/`caption`.
+- `warnings`: `[{"op_index", "message"}]`, vd. track khoá không bị `cut_range` cắt (lệch đồng bộ), dùng track mặc định thay track không tìm thấy theo tên.
+- Thanh trạng thái của app hiện "AI đang sửa: <nhãn>…" lúc chạy và "<nhãn> — xong. Ctrl+Z để hoàn tác." khi xong.
+
+`validate_operations(ops)` kiểm như `apply_operations` nhưng không đổi gì và không cần `base_revision`/`label`:
+
+```json
+{"ok": false, "errors": [{"op_index": 1, "field": "at_f", "message": "V1 already has a clip in [300, 450)"}],
+ "warnings": [{"op_index": 2, "message": "checked against the current timeline; earlier ops of this batch change it, apply re-checks"}]}
+```
+
+Op đứng sau một op làm đổi timeline thì lỗi theo trạng thái chỉ là cảnh báo (`apply` kiểm lại đúng lúc).
+
+`list_operations()` trả schema mọi op:
+
+```json
+{"ops": [{"type": "split", "summary": "Cut a clip (and its linked audio/video) in two at a timeline frame",
+          "params": {"clip_id": {"type": "clip", "required": true, "description": "…"},
+                     "at_f": {"type": "frame", "required": true, "description": "…"}}}]}
+```
+
+Kiểu tham số: `frame` (int ≥ 0, frame timeline hoặc frame nguồn theo fps project), `int`, `number`, `string`, `enum` (`values`), `bool`, `track` (id số, tag `"V1"` hoặc tên track, không phân biệt hoa thường), `clip` (id clip timeline), `source` (id bin clip = `kdenlive:id`, chuỗi, xem `list_sources`). Có `min`/`max` (số), `min_length`/`max_length` (chuỗi), `values` (enum), `default` khi áp dụng.
+
+#### Op P1
+
+Mọi khoảng nửa mở; mọi op nhận thêm `reason`.
+
+| Op | Tham số | Việc (hàm Kdenlive) |
+| --- | --- | --- |
+| `cut_range` | `start_f`, `end_f` | Cắt bỏ `[start_f, end_f)` trên **mọi track không khoá** rồi kéo phần sau lên lấp chỗ trống (ripple). Không track nào khoá và guide không bị khoá thì guide trong khoảng bị xoá, guide sau khoảng dời theo (như Extract Zone). Track khoá giữ nguyên → cảnh báo lệch đồng bộ. Phụ đề chưa dời theo (cảnh báo). |
+| `split` | `clip_id`, `at_f` | Cắt clip (và clip cặp `linked`/cùng nhóm) tại `at_f`, `start_f < at_f < end_f`. `created` = các clip nửa sau. |
+| `trim` | `clip_id`, `start_f?`, `end_f?` | Đặt mép mới trên timeline (ít nhất một). Mép trái dời thì điểm vào nguồn dời theo. Clip cặp có cùng mép được cắt theo. Không vượt nguồn, không chồng clip bên cạnh. |
+| `move` | `clip_id`, `at_f`, `track?` | Dời clip tới `at_f` (mép trái), giữ track nếu không nói. Clip trong nhóm (cặp hình+tiếng) dời cả nhóm cùng độ lệch. Chỗ đích phải trống. |
+| `insert_clip` | `source`, `in_f`, `out_f`, `track`, `at_f`, `audio_track?`, `audio_stream?`, `audio?` (mặc định `true`) | Đặt khoảng nguồn `[in_f, out_f)` vào `at_f` trên `track` (chỗ trống, không ripple). Nguồn có hình + tiếng và track là track video: clip tiếng lên `audio_track` (mặc định track audio đối xứng của `track`), stream `audio_stream` (chỉ số MLT như `list_recordings`; mặc định stream mặc định của clip), hai clip `linked`. Track audio → chỉ tiếng. Không bao giờ hỏi tạo track. |
+| `add_music` | `source`, `at_f`, `in_f?` (0), `out_f?` (hết nguồn), `track?`, `gain_db?` (0, -60…20) | Như `insert_clip` chỉ phần tiếng, lên track tên `Nhạc`/`Nhạc/SFX`/`Music` (hoặc `track`). `gain_db ≠ 0` → hiệu ứng `volume` (`level` dB). |
+| `title_card` | `text` (1…200), `start_f`, `end_f`, `track?`, `style?` (`black` \| `dim`) | Thẻ chữ toàn màn hình: title clip (`kdenlivetitle`) mới trong bin, chữ trắng giữa khung trên nền đen (`black`) hoặc đen mờ (`dim`). Track mặc định: track video tên `Chữ`/`Text`/`Title`, không có thì track video trên cùng (cảnh báo). |
+| `caption` | `text` (1…300), `start_f`, `end_f`, `speaker?`, `track?`, `style?` (`bottom` \| `top` \| `pop`) | Câu đắt: title clip chữ trắng viền đen ở đáy (`bottom`) hoặc trên (`top`) khung, `pop` chữ vàng to; `speaker` thêm "<speaker>: " đầu câu. Track như `title_card`. |
+
+Kiểm trước khi chạy (validator P1): op có trong registry; tham số đúng kiểu và khoảng; track có, không khoá, đúng loại (op hình → track video; `add_music` → track audio); clip có, không nằm trên track khoá, không có mix (chuyển cảnh cùng track) khi `trim`/`move`; nguồn có trong bin, đã nạp, có hình/tiếng mà op cần; frame trong độ dài nguồn; khoảng đích trống trên track. Quy tắc §8.6 của thiết kế (giữa từ, giữa phản ứng, shot quá ngắn) chờ transcript (P2–P4).
 
 ### 8.6 `add_markers` [P1c]
 
-`{"base_revision", "markers": [{"f": 43380, "comment": "phản ứng", "category": 2}]}` → thêm guide trên sequence đang mở, một bước undo "AI: thêm marker". Trả revision mới.
+```json
+{"method": "add_markers",
+ "params": {"base_revision": 1873402, "label": "AI: đánh dấu chỗ cần xem",
+            "markers": [{"f": 43380, "comment": "phản ứng", "category": 2}]}}
+```
+
+Thêm guide trên sequence đang mở, một bước undo (nhãn mặc định `"AI: thêm marker"`). `markers`: 1…500; `f` ≥ 0; `comment` ≤ 500 ký tự; `category` là loại guide của project (0…8 mặc định, xem Kdenlive › Project › Guide categories), bỏ trống thì dùng loại mặc định. Đã có guide tại frame đó thì đổi chú thích/loại. Kết quả `{"batch_id", "revision", "added"}`. Lỗi như `apply_operations` (`conflict`, `validation_failed`).
+
+### 8.7 `undo_batch` [P1c]
+
+`{"batch_id": "5f0c…"}` → hoàn tác đợt (của `apply_operations` hoặc `add_markers`) **chỉ khi** đợt đó còn là bước undo trên cùng (giống bấm Ctrl+Z đúng một lần). Kết quả `{"revision", "undone": "<nhãn>"}`. Đã có bước khác chồng lên (người dùng sửa tay, đợt sau) hoặc đợt đã bị hoàn tác → `conflict`; `batch_id` lạ (kể cả của lần chạy app trước) → `not_found`. P5 mở rộng thành Giữ/Hoàn tác trong dock Hoạt động AI.
 
 ## 9. Phiên bản
 
