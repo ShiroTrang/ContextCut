@@ -23,3 +23,6 @@ compile_commands.json
 
 # Artefacts from running KDE CI locally
 kde-ci-reports/*
+
+# ContextCut: install staging dir of packaging/build.sh
+/stage/

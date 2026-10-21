@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: none
+# SPDX-License-Identifier: CC0-1.0
+# ContextCut: bash scripts must keep LF even with core.autocrlf=true
+*.sh text eol=lf
