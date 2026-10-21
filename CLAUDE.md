@@ -10,6 +10,7 @@ ContextCut = bản fork mỏng của Kdenlive 26.08.2 (C++/Qt 6, MLT) + dịch v
 2. `docs/specs/2026-10-21-contextcut-design.md` — thiết kế v3.1 (thắng khi mâu thuẫn).
 3. `docs/specs/kien-truc-v3.md` — kiến trúc v3 (bản gốc: `D:\ContextCut\ContextCut MCP — Kiến trúc v3.md`).
 4. `patches.md` — mọi chỗ đã sửa vào mã gốc Kdenlive.
+5. `docs/plans/P1.md` (P1 chia P1a/P1b/P1c) và `docs/protocol.md` — hợp đồng cầu nối app ↔ `contextcut-ai`.
 
 ## Build và chạy (Windows, PowerShell)
 
@@ -24,7 +25,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - MSYS2 riêng: `D:\ContextCut\env\msys64` (UCRT64; mặc định `<repo>\..\env\msys64`, đổi bằng `-Msys2Root` hoặc `CONTEXTCUT_MSYS2`). **Không đụng `C:\msys64`** (Python trên PATH của Nhan lấy từ đó).
 - Thư mục: `build\` (Ninja), `stage\` (cài thử, `stage\bin\contextcut.exe`), ccache dùng chung `D:\ContextCut\env\ccache`.
 - Thời gian (8 nhân): build đầy đủ 22–27 phút; không đổi gì thì ~10 giây; sửa một file `.cpp` thì vài chục giây (ccache).
-- Chưa có test tự động (`BUILD_TESTING=OFF`). Kiểm bằng cách chạy app.
+- Chưa có test C++ tự động (`BUILD_TESTING=OFF`). Kiểm bằng cách chạy app.
+- Cầu nối AI (P1a): app ghi `%LOCALAPPDATA%\contextcut\bridge.json` (cổng + token mỗi lần chạy). Khi app đang chạy: `uv run contextcut-ai/tools/bridge_probe.py check` (20 kiểm tra), `… call get_timeline limit=5`, `… watch`.
 
 ## Quy tắc fork mỏng
 
@@ -46,6 +48,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Lần chạy đầu hiện hộp Quick Setup bằng QML: phím Enter không bấm được; tự động hoá bằng UI Automation `InvokePattern` trên nút "Start Editing". Màn hình chào chặn việc khởi tạo MLT cho tới khi qua nó (`--no-welcome` để bỏ).
 - App GUI không in log ra stderr khi bị chuyển hướng, trừ khi đặt `QT_FORCE_STDERR_LOGGING=1`.
 - File khoá `%TEMP%\kdenlivelock` dùng chung với Kdenlive gốc (xem `patches.md`).
+- Thêm thư viện Qt vào link `PUBLIC` của `kdenliveLib` đổi cờ biên dịch của mọi file: lần build sau biên dịch lại cả thư viện (~10 phút); code của `src/contextcut/` nên dùng thư viện đã có.
+- Tự động hoá UI ContextCut: computer-use không thấy `contextcut.exe`. Dùng UI Automation của PowerShell: bấm được nút thanh công cụ, nút hộp thoại, tab sequence; **menu Qt thì không**. Chạy lệnh theo tên bằng SendKeys `^%i` (Find Action) + tên + Enter. Hộp "Project Settings" không có trong cây UIA: chụp cửa sổ để xem. Nút Forward/Rewind thứ hai mới là của Project Monitor.
+- Giết app thì lần sau hộp "File Recovery" chặn việc nạp project (cầu nối trả `no_project` tới khi bấm "Do not recover").
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -55,7 +60,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | GĐ | Nội dung | Trạng thái |
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
-| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Chưa |
+| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Đang làm: **P1a xong** 22/10/2026 (cầu nối C++ + tool đọc, `docs/handoff/P1a.md`); P1b (MCP server Python), P1c (ops, undo, cổng P1) chưa |
 | P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | Chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
