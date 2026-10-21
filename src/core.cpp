@@ -15,6 +15,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "bin/projectitemmodel.h"
 #include "capture/mediacapture.h"
 #include "config-kdenlive.h"
+#include "contextcut/bridge/aibridgeserver.h" // ContextCut: AI bridge
 #include "core.h"
 #include "dialogs/proxytest.h"
 #include "dialogs/splash.hpp"
@@ -390,6 +391,7 @@ void Core::initGUI(const QString &MltPath, const QUrl &Url, const QStringList &c
         pCore->updateHideBarsTimer(false);
     });
     m_mainWindow = new MainWindow();
+    ContextCut::AiBridgeServer::start(m_mainWindow); // ContextCut: AI bridge (src/contextcut, docs/protocol.md)
 
     // The MLT Factory will be initiated there, all MLT classes will be usable only after this
     bool inSandbox = m_packageType == LinuxPackageType::AppImage || m_packageType == LinuxPackageType::Flatpak || m_packageType == LinuxPackageType::Snap;

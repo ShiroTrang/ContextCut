@@ -25,6 +25,8 @@ Gốc upstream: tag `v26.08.2` (`ef54398259f2af1d29095a798cab48ca4c52f141`).
 | `src/main.cpp` (`MLT_REPOSITORY_DENY`) | Thêm `libmltjackrack:libmltladspa` | Chặn plugin Waves SoundGrid (+3,5 s khởi động, crash lúc thoát sau khi xuất clip dài). Phải sửa ở đây vì Kdenlive ghi đè biến này; `kdenlive_render` thừa hưởng biến môi trường | P0 |
 | `src/main.cpp` (`KAboutData`) | componentName `contextcut`, tên hiển thị `ContextCut`, mô tả "dựa trên Kdenlive", homepage + báo lỗi về GitHub ContextCut, thêm component "Kdenlive"; giữ version `KDENLIVE_VERSION` và toàn bộ tác giả Kdenlive | Tách config/data (`contextcutrc`, `%LOCALAPPDATA%\contextcut`), không dùng Kdenlive làm tên sản phẩm, không gửi lỗi của fork lên KDE | P0 |
 | `src/core.cpp` | Đường dẫn kxmlgui khi kiểm crash lần đầu → `kxmlgui5/contextcut/contextcutui.rc` | Như `resetConfig` | P0 |
+| `src/core.cpp` (`initGUI`) | `#include "contextcut/bridge/aibridgeserver.h"` + một dòng `ContextCut::AiBridgeServer::start(m_mainWindow);` ngay sau `m_mainWindow = new MainWindow();` | Khởi động cầu nối AI (WebSocket `127.0.0.1` + token, `docs/protocol.md`). Không có hook nào khác; app vẫn chạy nếu cầu nối không mở được cổng | P1a |
+| `src/CMakeLists.txt` | `add_subdirectory(contextcut)`; sau khối link Qt: `find_package(Qt6 … WebSockets)` + `target_link_libraries(kdenliveLib PUBLIC Qt6::WebSockets)` | Biên dịch `src/contextcut/` vào `kdenliveLib` như các thư mục con khác; cầu nối dùng `QWebSocketServer` | P1a |
 
 ## Biết trước, chưa vá
 

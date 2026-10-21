@@ -67,6 +67,7 @@ add_subdirectory(utils)
 add_subdirectory(widgets)
 add_subdirectory(xml)
 add_subdirectory(layouts)
+add_subdirectory(contextcut) # ContextCut: AI bridge sources (src/contextcut)
 
 ## toplevel source code files
 list(APPEND kdenlive_SRCS
@@ -300,6 +301,10 @@ target_link_libraries(kdenliveLib PUBLIC
     Qt${QT_MAJOR_VERSION}::SvgWidgets
     # Qt${QT_MAJOR_VERSION}::Test
 )
+
+# ContextCut: the AI bridge (src/contextcut/bridge) uses QWebSocketServer
+find_package(Qt${QT_MAJOR_VERSION} REQUIRED COMPONENTS WebSockets)
+target_link_libraries(kdenliveLib PUBLIC Qt${QT_MAJOR_VERSION}::WebSockets)
 
 target_link_libraries(kdenliveLib PUBLIC KDAB::kddockwidgets)
 

@@ -154,7 +154,7 @@ Không có tham số. Không có project → `no_project`; đang nạp/đóng �
 
 - `project.path` là `null` khi project chưa lưu lần nào; khi đó `companion_dir` cũng `null`. `companion_dir` là chỗ dữ liệu AI sẽ nằm (`MyVideo.contextcut/`), P1a chỉ báo đường dẫn, không tạo.
 - `selection.zone` là vùng in/out của timeline; `null` khi chưa đặt (in = out = 0).
-- `tracks[].items` là số clip + composition trên track.
+- `tracks[].items` là số clip + composition trên track. `hidden` chỉ có nghĩa với track video (đã tắt hình), `muted` chỉ với track audio (đã tắt tiếng); với track loại kia luôn `false`.
 
 ### 8.3 `get_timeline` [P1a]
 
@@ -180,9 +180,9 @@ Kết quả:
   "items": [
     {"id": 42, "kind": "clip", "track": 5, "start_f": 0, "end_f": 300,
      "source": "4", "src_in_f": 120, "src_out_f": 420, "name": "2026-10-20 21-00-00.mkv",
-     "speed": 1.0, "enabled": true, "content": "av", "linked": 43, "effects": ["Fade in"]},
+     "speed": 1.0, "enabled": true, "content": "video", "linked": 43, "effects": ["Fade in"]},
     {"id": 61, "kind": "composition", "track": 6, "start_f": 280, "end_f": 320,
-     "name": "Wipe", "service": "luma"}
+     "name": "Wipe", "asset": "luma"}
   ],
   "guides": [{"f": 3600, "comment": "Hook", "category": 0}],
   "sources": {"4": {"name": "2026-10-20 21-00-00.mkv", "type": "av", "recording": true}},
@@ -191,7 +191,7 @@ Kết quả:
 ```
 
 - `items` sắp theo `start_f`, rồi thứ tự track hiển thị, rồi `id`.
-- Clip: `content` là `av` | `video` | `audio` (phần clip đang dùng); `enabled` là `false` khi clip bị tắt; `linked` là id clip audio/video đi cặp (`null` nếu không có); `effects` là tên hiển thị các hiệu ứng đang bật, theo thứ tự stack; `speed` khác 1 thì `src_in_f`/`src_out_f` tính theo frame của producer đã đổi tốc độ (P1 chỉ đọc, chưa sửa tốc độ).
+- Clip: `content` là `video` | `audio` (Kdenlive luôn tách clip có tiếng thành một clip hình trên track V và một clip tiếng trên track A, nối nhau qua `linked`); `enabled` là `false` khi clip bị tắt; `linked` là id clip audio/video đi cặp (`null` nếu không có); `effects` là tên hiển thị các hiệu ứng đang bật, theo thứ tự stack; `speed` khác 1 thì `src_in_f`/`src_out_f` tính theo frame của producer đã đổi tốc độ (P1 chỉ đọc, chưa sửa tốc độ).
 - `guides`: guide của sequence nằm trong `[start_f, end_f)`, mọi trang đều có (tối đa 1000, thừa thì có `"guides_truncated": true`).
 - `sources`: chỉ các nguồn mà item trong trang này dùng; chi tiết ở `list_recordings`.
 - Track phụ đề chưa có trong `get_timeline` (P2: `get_transcript`/phụ đề).
@@ -207,9 +207,9 @@ Tham số: `limit` (1…500, mặc định 100), `cursor`.
   "revision": 1873402,
   "recordings": [
     {"id": "4", "name": "2026-10-20 21-00-00.mkv", "path": "D:/OBS/2026-10-20 21-00-00.mkv",
-     "file_hash": "5d41402abc4b2a76b9719d911017c592", "type": "av",
+     "file_hash": "5d41402abc4b2a76b9719d911017c592", "type": "av", "ready": true,
      "duration_f": 432000, "source_fps": 60.0, "width": 1920, "height": 1080,
-     "audio_streams": [{"index": 1, "name": "Mix", "channels": 2}, {"index": 2, "name": "Mic", "channels": 1}],
+     "audio_streams": [{"index": 1, "name": "Stereo 48kHz aac", "channels": 2}, {"index": 2, "name": "Mono 48kHz aac", "channels": 1}],
      "on_timeline": true, "track_map": null, "day_start": null}
   ],
   "next_cursor": null
@@ -217,8 +217,10 @@ Tham số: `limit` (1…500, mặc định 100), `cursor`.
 ```
 
 - `id` = `kdenlive:id` của bin clip, ổn định giữa các lần mở; mọi dữ liệu phân tích (transcript, sự kiện, khoảnh khắc) về sau mang id này.
+- `audio_streams[].index` là chỉ số stream MLT (đếm cả stream hình, nên OBS track 1 thường là `index: 1`); `name` là mô tả Kdenlive (`Mono 48kHz aac`) hoặc tên người dùng đặt trong Kdenlive. Tên track OBS ghi trong file (Mic, Discord…) chưa đọc ở P1a; P2 đọc bằng ffprobe khi dựng `track_map`.
 - `file_hash` = hash Kdenlive tính trên phần đầu và cuối file (dùng làm khoá cache phân tích); `null` nếu file thiếu.
-- `duration_f` tính theo fps của project.
+- `duration_f` tính theo fps của project. `ready` là `false` khi Kdenlive chưa nạp xong clip (các trường kích thước, stream có thể chưa đúng).
+- Composition: `name` là tên hiển thị, `asset` là id asset Kdenlive (`luma`, `qtblend`…).
 - `track_map` (P2: track nào là Mic/Discord/Game) và `day_start` (P7) là `null` cho tới khi các giai đoạn đó lưu chúng vào `MyVideo.contextcut/recordings.json`.
 
 ### 8.5 `list_operations`, `validate_operations`, `apply_operations` [P1c]
