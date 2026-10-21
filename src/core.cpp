@@ -171,7 +171,9 @@ bool Core::build(LinuxPackageType packageType, bool testMode, bool debugMode, bo
             } else {
                 // if first run, no need to reset config, keep lock file
                 if (firstRun) {
-                    const QString configFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kxmlgui5/kdenlive/kdenliveui.rc"));
+                    // ContextCut: own kxmlgui dir, never the stock Kdenlive one
+                    const QString configFile =
+                        QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kxmlgui5/contextcut/contextcutui.rc"));
                     // Check if a previous kdenliveui.rc file exists, so propose to erase
                     showRecovery = !configFile.isEmpty();
                 } else {

@@ -207,6 +207,8 @@ ecm_add_app_icon(kdenlive ICONS ${ICON_FILES})
 
 ## Kdenlive Executable
 qt_add_executable(kdenlive MACOSX_BUNDLE main.cpp ${kdenlive_extra_SRCS} ${kdenlive})
+# ContextCut: ship the app as contextcut.exe (target name kept to limit upstream changes)
+set_target_properties(kdenlive PROPERTIES OUTPUT_NAME contextcut)
 target_include_directories(kdenlive
     PRIVATE ${CMAKE_BINARY_DIR}
     )

@@ -34,6 +34,8 @@ if (-not (Test-Path -LiteralPath $dlls)) {
 
 # Prepend so Qt/KF/MLT DLLs from this MSYS2 win over any other MinGW on the user's PATH.
 $env:PATH = "$dlls;$env:PATH"
+# MLT modules/data are found relative to the exe (stage\lib\mlt, stage\share\mlt); build.sh
+# copies them there because MLT on Windows ignores MLT_REPOSITORY.
 $startArgs = @{ FilePath = $exe; PassThru = $true }
 if ($AppArgs) { $startArgs.ArgumentList = $AppArgs }
 $proc = Start-Process @startArgs

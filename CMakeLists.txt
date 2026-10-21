@@ -186,7 +186,8 @@ endif()
 if(APPLE)
     set(DATA_INSTALL_PREFIX "")
 else()
-    set(DATA_INSTALL_PREFIX "/kdenlive")
+    # ContextCut: Qt on Windows looks for app data in <exe>/data/<applicationName>
+    set(DATA_INSTALL_PREFIX "/contextcut")
 endif()
 
 if(KF${KF_MAJOR}DocTools_FOUND)

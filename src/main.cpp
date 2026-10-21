@@ -119,7 +119,8 @@ static void resetConfig()
 {
     // Delete config file
     KSharedConfigPtr config = KSharedConfig::openConfig();
-    if (config->name().contains(QLatin1String("kdenlive"))) {
+    // ContextCut: our config is contextcutrc; never delete the stock kdenliverc
+    if (config->name().contains(QLatin1String("contextcut"))) {
         // Make sure we delete our config file
         QFile f(QStandardPaths::locate(QStandardPaths::GenericConfigLocation, config->name(), QStandardPaths::LocateFile));
         if (f.exists()) {
@@ -129,7 +130,8 @@ static void resetConfig()
     }
 
     // Delete xml ui rc file
-    const QString configFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kxmlgui5/kdenlive/kdenliveui.rc"));
+    // ContextCut: own kxmlgui dir and resource (see uiresources.qrc)
+    const QString configFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kxmlgui5/contextcut/contextcutui.rc"));
 
     if (configFile.isEmpty()) {
         return;
@@ -148,7 +150,7 @@ static void resetConfig()
         if (!shortcuts.isNull()) {
             qDebug() << "==== FOUND CUSTOM SHORTCUTS!!!";
             // Copy the original settings and append custom shortcuts
-            QFile f2(QStringLiteral(":/kxmlgui5/kdenlive/kdenliveui.rc"));
+            QFile f2(QStringLiteral(":/kxmlgui5/contextcut/contextcutui.rc"));
             if (f2.exists() && f2.open(QIODevice::ReadOnly)) {
                 QDomDocument doc2;
                 doc2.setContent(&f2);
@@ -235,7 +237,10 @@ int main(int argc, char *argv[])
 #endif
 
     // Block MLT Qt5 module to prevent crashes
-    qputenv("MLT_REPOSITORY_DENY", "libmltqt:libmltglaxnimate");
+    // ContextCut: also block jackrack/ladspa, which load Waves SoundGrid plugins
+    // (+3.5 s startup, crash on exit after long renders). Set here because this line
+    // would overwrite a value set by a launcher; kdenlive_render inherits it.
+    qputenv("MLT_REPOSITORY_DENY", "libmltqt:libmltglaxnimate:libmltjackrack:libmltladspa");
 
 #if defined(Q_OS_WIN)
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
@@ -282,11 +287,17 @@ int main(int argc, char *argv[])
     KLocalizedString::setApplicationDomain("kdenlive");
 
     // Create KAboutData
-    QString otherText = i18n("Please report bugs to <a href=\"%1\">%2</a>", QStringLiteral("https://bugs.kde.org/enter_bug.cgi?product=kdenlive"),
-                             QStringLiteral("https://bugs.kde.org/"));
+    // ContextCut: own app name (=> contextcutrc, %LOCALAPPDATA%\contextcut, kxmlgui5\contextcut),
+    // credit Kdenlive, and send bug reports to the ContextCut repo instead of bugs.kde.org.
+    // The version stays KDENLIVE_VERSION so .kdenlive files are written exactly as upstream.
+    QString otherText = QStringLiteral("ContextCut là bản fork của <a href=\"https://kdenlive.org\">Kdenlive</a>. "
+                                       "Báo lỗi ContextCut tại <a href=\"%1\">%1</a>, không gửi lên bugs.kde.org.")
+                            .arg(QStringLiteral("https://github.com/ShiroTrang/ContextCut/issues"));
 
-    KAboutData aboutData(QByteArray("kdenlive"), i18n("Kdenlive"), KDENLIVE_VERSION, i18n("An open source video editor."), KAboutLicense::GPL_V3,
-                         i18n("Copyright © 2007–2025 Kdenlive authors"), otherText, QStringLiteral("https://kdenlive.org"));
+    KAboutData aboutData(QByteArray("contextcut"), QStringLiteral("ContextCut"), KDENLIVE_VERSION,
+                         QStringLiteral("Trình dựng video có AI hỗ trợ, dựa trên Kdenlive."), KAboutLicense::GPL_V3,
+                         i18n("Copyright © 2007–2025 Kdenlive authors") + QStringLiteral("\nCopyright © 2026 ContextCut"), otherText,
+                         QStringLiteral("https://github.com/ShiroTrang/ContextCut"), QStringLiteral("https://github.com/ShiroTrang/ContextCut/issues"));
     // main developers (alphabetical)
     aboutData.addAuthor(i18n("Jean-Baptiste Mardelle"), i18n("Core team member, main developer and maintainer, MLT, and KDE SC 4 / KF5 port"), QStringLiteral("jb@kdenlive.org"));
     // active developers with major involvement
@@ -312,7 +323,9 @@ int main(int argc, char *argv[])
     aboutData.setTranslator(i18n("NAME OF TRANSLATORS"), i18n("EMAIL OF TRANSLATORS"));
     aboutData.setOrganizationDomain(QByteArray("kde.org"));
 
-    aboutData.addComponent(aboutData.displayName(), QString(), KDENLIVE_FULL_VERSION_STRING, aboutData.homepage());
+    // ContextCut: list the Kdenlive version we are based on
+    aboutData.addComponent(QStringLiteral("Kdenlive"), QStringLiteral("Trình dựng video mã nguồn mở mà ContextCut dựa trên."), KDENLIVE_FULL_VERSION_STRING,
+                           QStringLiteral("https://kdenlive.org"));
 
     aboutData.addComponent(i18n("MLT"), i18n("Open source multimedia framework."), mlt_version_get_string(),
                            QStringLiteral("https://mltframework.org") /*, KAboutLicense::LGPL_V2_1*/);

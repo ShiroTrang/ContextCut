@@ -1,6 +1,7 @@
 <RCC>
-    <qresource prefix="/kxmlgui5/kdenlive">
-        <file>kdenliveui.rc</file>
+    <!-- ContextCut: KXmlGui looks for kxmlgui5/<componentName>/<componentName>ui.rc -->
+    <qresource prefix="/kxmlgui5/contextcut">
+        <file alias="contextcutui.rc">kdenliveui.rc</file>
     </qresource>
     <qresource prefix="/data">
         <file alias="included_effects.txt">../data/included_effects.txt</file>

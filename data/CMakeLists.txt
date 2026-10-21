@@ -27,7 +27,8 @@ install(FILES
 
   DESTINATION ${KDE_INSTALL_DATADIR}${DATA_INSTALL_PREFIX})
 
-install(FILES kdenlive.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
+# ContextCut: KNotification looks for knotifications6/<applicationName>.notifyrc
+install(FILES kdenlive.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR} RENAME contextcut.notifyrc)
 
 install(FILES profiles.xml DESTINATION ${KDE_INSTALL_DATADIR}${DATA_INSTALL_PREFIX}/export)
 install(FILES org.kde.kdenlive.appdata.xml DESTINATION ${KDE_INSTALL_METAINFODIR})

@@ -106,5 +106,11 @@ echo "== Build"
 cmake --build "$build_dir"
 echo "== Install into $stage_dir"
 cmake --install "$build_dir" >/dev/null
+# MLT on Windows ignores MLT_REPOSITORY and loads modules from <exe>/../lib/mlt (data from
+# <exe>/../share/mlt, frei0r from <exe>/../lib/frei0r-1), so stage gets a copy (~15 MB).
+echo "== Sync MLT runtime from $MINGW_PREFIX into stage"
+mkdir -p "$stage_dir/lib" "$stage_dir/share"
+cp -ru "$MINGW_PREFIX/lib/mlt" "$MINGW_PREFIX/lib/frei0r-1" "$stage_dir/lib/"
+cp -ru "$MINGW_PREFIX/share/mlt" "$stage_dir/share/"
 ccache --show-stats | sed -n '1,6p'
 echo "== Done in ${SECONDS}s. Run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\\run.ps1"
