@@ -27,6 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Thời gian (8 nhân): build đầy đủ 22–27 phút; không đổi gì thì ~10 giây; sửa một file `.cpp` thì vài chục giây (ccache).
 - Chưa có test C++ tự động (`BUILD_TESTING=OFF`). Kiểm bằng cách chạy app.
 - Cầu nối AI (P1a): app ghi `%LOCALAPPDATA%\contextcut\bridge.json` (cổng + token mỗi lần chạy). Khi app đang chạy: `uv run contextcut-ai/tools/bridge_probe.py check` (20 kiểm tra), `… call get_timeline limit=5`, `… watch`.
+- MCP server (P1b, `contextcut-ai/README.md`): `uv run --directory contextcut-ai pytest` (test sống `-m live` tự bỏ qua khi app không chạy); đăng ký cho client: `uv run --directory contextcut-ai python scripts/register_clients.py [--dry-run]` (hỏi y/N từng thay đổi). Sửa `contextcut-ai/guide/` thì chạy `scripts/gen_agent_docs.py`.
 
 ## Quy tắc fork mỏng
 
@@ -51,6 +52,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Thêm thư viện Qt vào link `PUBLIC` của `kdenliveLib` đổi cờ biên dịch của mọi file: lần build sau biên dịch lại cả thư viện (~10 phút); code của `src/contextcut/` nên dùng thư viện đã có.
 - Tự động hoá UI ContextCut: computer-use không thấy `contextcut.exe`. Dùng UI Automation của PowerShell: bấm được nút thanh công cụ, nút hộp thoại, tab sequence; **menu Qt thì không**. Chạy lệnh theo tên bằng SendKeys `^%i` (Find Action) + tên + Enter. Hộp "Project Settings" không có trong cây UIA: chụp cửa sổ để xem. Nút Forward/Rewind thứ hai mới là của Project Monitor.
 - Giết app thì lần sau hộp "File Recovery" chặn việc nạp project (cầu nối trả `no_project` tới khi bấm "Do not recover").
+- Ở màn hình chào (cửa sổ `Splash`, khi mở app không kèm project và không `--no-welcome`) cửa sổ chính chưa dựng nên **cầu nối chưa mở**, chưa có `bridge.json`.
+- Thử agent bằng `claude -p` từ trong phiên Claude Code của app desktop: bỏ các biến `CLAUDE*`, `ANTHROPIC_*` thừa hưởng từ app trước khi chạy; CLI báo 401 "token revoked" thì Nhan chạy `claude auth login`. Trong Git Bash, đối số `/mcp__…` bị đổi thành `C:/Program Files/Git/mcp__…`: đặt `MSYS_NO_PATHCONV=1`.
+- Đóng app khi project đã sửa: `WindowPattern.Close` của UIA treo vì hộp "save changes?" là modal, và UIA không thấy nút trong hộp đó. Gửi `WM_CLOSE` cho cửa sổ chính, rồi `PostMessage` nhấp chuột vào "Do Not Save" (hộp `Warning - ContextCut` 544×125, nút ở toạ độ cửa sổ ≈ 398,94).
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -60,7 +64,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | GĐ | Nội dung | Trạng thái |
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
-| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Đang làm: **P1a xong** 22/10/2026 (cầu nối C++ + tool đọc, `docs/handoff/P1a.md`); P1b (MCP server Python), P1c (ops, undo, cổng P1) chưa |
+| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Đang làm: **P1a xong** 22/10/2026 (cầu nối C++ + tool đọc, `docs/handoff/P1a.md`); **P1b xong** 22/10/2026 (MCP server Python, guide v0, đăng ký client, `docs/handoff/P1b.md`); P1c (ops, undo, cổng P1) chưa |
 | P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | Chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
