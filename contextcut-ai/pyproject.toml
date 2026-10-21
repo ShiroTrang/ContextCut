@@ -1,0 +1,26 @@
+[project]
+name = "contextcut-ai"
+version = "0.1.0"
+description = "MCP server của ContextCut: AI agent đọc (và từ P1c sửa) timeline đang mở trong app"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+dependencies = [
+    "mcp==2.3.0",
+    "websockets>=16,<18",
+    "pydantic>=2.12,<3",
+]
+
+[project.scripts]
+contextcut-ai = "contextcut_ai.mcp_server:main"
+
+[dependency-groups]
+dev = ["pytest>=9.1,<10"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: cần ContextCut đang chạy (bridge.json); tự bỏ qua khi không có"]
