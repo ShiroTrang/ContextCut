@@ -54,7 +54,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 
 | GĐ | Nội dung | Trạng thái |
 | --- | --- | --- |
-| P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Đang làm |
+| P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
 | P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Chưa |
 | P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | Chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
