@@ -56,7 +56,8 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     @read_tool
     async def get_editor_state() -> str:
         """Trạng thái ContextCut: project, fps (phân số num/den), kích thước, sequence, playhead_f, vùng chọn,
-        track (id, tag V1/A1, tên, loại, khoá/ẩn/tắt tiếng), số clip/marker/bản ghi, revision. Gọi đầu tiên."""
+        track (id, tag V1/A1, tên, loại, khoá/ẩn/tắt tiếng), số clip/marker/bản ghi, revision. Gọi đầu tiên.
+        Chỉ có số lượng: tên và chi tiết bản ghi ở list_recordings, clip và marker ở get_timeline."""
         return await call("get_editor_state")
 
     @read_tool
