@@ -1,10 +1,10 @@
 # Giao thức cầu nối ContextCut (AI Bridge) — v1
 
-21/10/2026, cập nhật 22/10/2026 (P1c) · trạng thái: **hợp đồng cho P1** (P1a và P1c cài, P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
+21/10/2026, cập nhật 22/10/2026 (P1c, P2a) · trạng thái: **hợp đồng cho P1–P2** (P1a, P1c, P2a cài; P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
 
 App ContextCut (C++) mở một server WebSocket cục bộ. Dịch vụ Python `contextcut-ai` (MCP server) là client duy nhất dự kiến; AI client (Claude, Codex, Antigravity) không nói chuyện thẳng với cầu nối. Tài liệu này là hợp đồng giữa hai bên: đổi thứ gì ở đây thì tăng `protocol` hoặc ghi rõ là trường mới không bắt buộc.
 
-Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026).
+Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026); **[P2a]** cài ở P2a.
 
 ## 1. Tìm app và kết nối
 
@@ -114,6 +114,7 @@ Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429
 | `add_markers` | Thêm guide/marker để Nhan xem | P1c |
 | `undo_batch` | Hoàn tác đợt vừa áp dụng (khi còn là bước undo trên cùng) | P1c |
 | `import_media` | Nhập một file media vào bin (một bước undo) | P1c |
+| `list_subtitles` | Phụ đề trên track phụ đề của sequence đang mở; phân trang | P2a |
 
 ### 8.1 `auth` [P1a]
 
@@ -199,7 +200,7 @@ Kết quả:
 - Clip: `content` là `video` | `audio` (Kdenlive luôn tách clip có tiếng thành một clip hình trên track V và một clip tiếng trên track A, nối nhau qua `linked`); `enabled` là `false` khi clip bị tắt; `linked` là id clip audio/video đi cặp (`null` nếu không có); `effects` là tên hiển thị các hiệu ứng đang bật, theo thứ tự stack; `speed` khác 1 thì `src_in_f`/`src_out_f` tính theo frame của producer đã đổi tốc độ (P1 chỉ đọc, chưa sửa tốc độ).
 - `guides`: guide của sequence nằm trong `[start_f, end_f)`, mọi trang đều có (tối đa 1000, thừa thì có `"guides_truncated": true`).
 - `sources`: chỉ các nguồn mà item trong trang này dùng; chi tiết ở `list_recordings`.
-- Track phụ đề chưa có trong `get_timeline` (P2: `get_transcript`/phụ đề).
+- Track phụ đề không có trong `get_timeline`; đọc bằng `list_subtitles` (§8.9) **[P2a]**.
 
 ### 8.4 `list_recordings` [P1a]
 
@@ -285,7 +286,7 @@ Op đứng sau một op làm đổi timeline thì lỗi theo trạng thái chỉ
                      "at_f": {"type": "frame", "required": true, "description": "…"}}}]}
 ```
 
-Kiểu tham số: `frame` (int ≥ 0, frame timeline hoặc frame nguồn theo fps project), `int`, `number`, `string`, `enum` (`values`), `bool`, `track` (id số, tag `"V1"` hoặc tên track, không phân biệt hoa thường), `clip` (id clip timeline), `source` (id bin clip = `kdenlive:id`, chuỗi, xem `list_sources`). Có `min`/`max` (số), `min_length`/`max_length` (chuỗi), `values` (enum), `default` khi áp dụng.
+Kiểu tham số: `frame` (int ≥ 0, frame timeline hoặc frame nguồn theo fps project), `int`, `number`, `string`, `enum` (`values`), `bool`, `track` (id số, tag `"V1"` hoặc tên track, không phân biệt hoa thường), `clip` (id clip timeline), `source` (id bin clip = `kdenlive:id`, chuỗi, xem `list_sources`), `items` (mảng object, mô tả phần tử trong `description`) **[P2a]**. Có `min`/`max` (số), `min_length`/`max_length` (chuỗi), `min_items`/`max_items` (`items`), `values` (enum), `default` khi áp dụng.
 
 #### Op P1
 
@@ -293,16 +294,19 @@ Mọi khoảng nửa mở; mọi op nhận thêm `reason`.
 
 | Op | Tham số | Việc (hàm Kdenlive) |
 | --- | --- | --- |
-| `cut_range` | `start_f`, `end_f` | Cắt bỏ `[start_f, end_f)` trên **mọi track không khoá** rồi kéo phần sau lên lấp chỗ trống (ripple). Không track nào khoá và guide không bị khoá thì guide trong khoảng bị xoá, guide sau khoảng dời theo (như Extract Zone). Track khoá giữ nguyên → cảnh báo lệch đồng bộ. Phụ đề chưa dời theo (cảnh báo). |
+| `cut_range` | `start_f`, `end_f` | Cắt bỏ `[start_f, end_f)` trên **mọi track không khoá** rồi kéo phần sau lên lấp chỗ trống (ripple). Không track nào khoá và guide không bị khoá thì guide trong khoảng bị xoá, guide sau khoảng dời theo (như Extract Zone). Track khoá giữ nguyên → cảnh báo lệch đồng bộ. **[P2a]** Track phụ đề không khoá thì đi theo: phụ đề nằm trọn trong khoảng bị xoá, phụ đề cắt ngang bị thu lại phần nằm trong khoảng, phụ đề sau khoảng dời lên; khoá thì giữ nguyên (cảnh báo). |
 | `split` | `clip_id`, `at_f` | Cắt clip (và clip cặp `linked`/cùng nhóm) tại `at_f`, `start_f < at_f < end_f`. `created` = các clip nửa sau. |
 | `trim` | `clip_id`, `start_f?`, `end_f?` | Đặt mép mới trên timeline (ít nhất một). Mép trái dời thì điểm vào nguồn dời theo. Clip cặp có cùng mép được cắt theo. Không vượt nguồn, không chồng clip bên cạnh. |
 | `move` | `clip_id`, `at_f`, `track?` | Dời clip tới `at_f` (mép trái), giữ track nếu không nói. Clip trong nhóm (cặp hình+tiếng) dời cả nhóm cùng độ lệch. Chỗ đích phải trống. |
 | `insert_clip` | `source`, `in_f`, `out_f`, `track`, `at_f`, `audio_track?`, `audio_stream?`, `audio?` (mặc định `true`) | Đặt khoảng nguồn `[in_f, out_f)` vào `at_f` trên `track` (chỗ trống, không ripple). Nguồn có hình + tiếng và track là track video: clip tiếng lên `audio_track` (mặc định track audio đối xứng của `track`), stream `audio_stream` (chỉ số MLT như `list_recordings`; mặc định stream mặc định của clip), hai clip `linked`. Track audio → chỉ tiếng. Không bao giờ hỏi tạo track. |
 | `add_music` | `source`, `at_f`, `in_f?` (0), `out_f?` (hết nguồn), `track?`, `gain_db?` (0, -60…20) | Như `insert_clip` chỉ phần tiếng, lên track tên `Nhạc`/`Nhạc/SFX`/`Music` (hoặc `track`). `gain_db ≠ 0` → hiệu ứng `volume` (`level` dB). |
 | `title_card` | `text` (1…200), `start_f`, `end_f`, `track?`, `style?` (`black` \| `dim`) | Thẻ chữ toàn màn hình: title clip (`kdenlivetitle`) mới trong bin, chữ trắng giữa khung trên nền đen (`black`) hoặc đen mờ (`dim`). Track mặc định: track video tên `Chữ`/`Text`/`Title`, không có thì track video trên cùng (cảnh báo). |
-| `caption` | `text` (1…300), `start_f`, `end_f`, `speaker?`, `track?`, `style?` (`bottom` \| `top` \| `pop`) | Câu đắt: title clip chữ trắng viền đen ở đáy (`bottom`) hoặc trên (`top`) khung, `pop` chữ vàng to; `speaker` thêm "<speaker>: " đầu câu. Track như `title_card`. |
+| `caption` | `text` (1…300), `start_f`, `end_f`, `speaker?`, `track?`, `style?` (`bottom` \| `top` \| `pop`), `color?`, `uppercase?`, `label?` | Câu đắt: title clip chữ trắng viền đen ở đáy (`bottom`) hoặc trên (`top`) khung, `pop` chữ vàng to; `speaker` thêm "<speaker>: " đầu câu khi `label` (mặc định `true`). Track như `title_card`. **[P2a]** `color` = màu chữ `#RRGGBB` (thay màu của style), `uppercase` (mặc định `false`) viết hoa toàn câu. MCP server tự điền ba trường này theo người nói (`speakers.json`) nếu agent bỏ trống. |
+| `add_subtitles` **[P2a]** | `items` (1…5000 phần tử `{start_f, end_f, text (1…500), speaker?}`), `layer?` (0) | Thêm từng dòng vào **track phụ đề** của sequence (tạo track nếu chưa có, như khi thêm phụ đề tay). Các dòng không được chồng nhau, không chồng phụ đề có sẵn trên layer đó, track phụ đề không khoá. `speaker` ghi vào trường Name của sự kiện ASS. `
+` trong `text` là xuống dòng. `created` = id phụ đề mới. |
+| `clear_subtitles` **[P2a]** | `start_f`, `end_f`, `layer?` | Xoá phụ đề **bắt đầu** trong `[start_f, end_f)` (bỏ trống `layer` = mọi layer). Đặt trước `add_subtitles` trong cùng đợt để thay phụ đề một đoạn bằng một bước undo. |
 
-Kiểm trước khi chạy (validator P1): op có trong registry; tham số đúng kiểu và khoảng; track có, không khoá, đúng loại (op hình → track video; `add_music` → track audio); clip có, không nằm trên track khoá, không có mix (chuyển cảnh cùng track) khi `trim`/`move`; nguồn có trong bin, đã nạp, có hình/tiếng mà op cần; frame trong độ dài nguồn; khoảng đích trống trên track. Quy tắc §8.6 của thiết kế (giữa từ, giữa phản ứng, shot quá ngắn) chờ transcript (P2–P4).
+Kiểm trước khi chạy (validator P1, thêm phụ đề ở P2a): op có trong registry; tham số đúng kiểu và khoảng; track có, không khoá, đúng loại (op hình → track video; `add_music` → track audio); clip có, không nằm trên track khoá, không có mix (chuyển cảnh cùng track) khi `trim`/`move`; nguồn có trong bin, đã nạp, có hình/tiếng mà op cần; frame trong độ dài nguồn; khoảng đích trống trên track. Quy tắc §8.6 của thiết kế (giữa từ, giữa phản ứng, shot quá ngắn) chờ transcript (P2–P4).
 
 ### 8.6 `add_markers` [P1c]
 
@@ -325,6 +329,19 @@ Thêm guide trên sequence đang mở, một bước undo (nhãn mặc định `
 - `path` phải là đường dẫn tuyệt đối tới một file có thật, đuôi thuộc: video `mkv mp4 mov webm avi mpg mpeg m4v ts flv`, âm thanh `wav mp3 flac ogg oga m4a aac opus wma`, ảnh `png jpg jpeg webp bmp gif`. Sai → `invalid_params` (`field: "path"`).
 - Đường dẫn đã resolve (`canonicalFilePath`) phải trùng đường dẫn đưa vào (không phân biệt hoa thường): file hay thư mục cha là symlink, shortcut `.lnk` hay junction thì bị từ chối.
 - Nhập lại file đã có trong bin tạo thêm một clip (như Kdenlive); kiểm `list_sources` trước. `open_project` để P2.
+
+### 8.9 `list_subtitles` [P2a]
+
+Tham số (đều không bắt buộc): `start_f` (0), `end_f` (hết timeline), `limit` (1…1000, mặc định 200), `cursor`. Lấy phụ đề **giao** `[start_f, end_f)`, sắp theo `start_f` rồi `layer`. Chưa có track phụ đề → `items: []`.
+
+```json
+{"revision": 1873460,
+ "track": {"exists": true, "locked": false, "disabled": false, "layers": 1},
+ "items": [{"id": 512, "layer": 0, "start_f": 3600, "end_f": 3702, "text": "Ủa alo, nghe không?", "speaker": "Nhan"}],
+ "next_cursor": null}
+```
+
+`id` là id phụ đề của mô hình timeline (chỉ đúng trong một lần chạy app, như id clip). `speaker` là trường Name của sự kiện ASS (`""` nếu trống). Cursor theo §7.
 
 ## 9. Phiên bản
 
