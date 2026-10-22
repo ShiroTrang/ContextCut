@@ -12,8 +12,11 @@
 #include "opregistry.h"
 #include "timelineaccess.h"
 
+#include <QRegularExpression>
 #include <QSet>
+#include <climits>
 #include <cmath>
+#include <tuple>
 
 namespace ContextCut {
 
@@ -261,10 +264,109 @@ bool checkCutRange(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, O
     if (!locked.isEmpty()) {
         warnings << issue(op, QString(), QStringLiteral("locked tracks are not cut and fall out of sync: %1").arg(locked.join(QLatin1String(", "))));
     }
-    if (timeline->hasSubtitleModel() && timeline->getSubtitleModel()->count() > 0) {
-        warnings << issue(op, QString(), QStringLiteral("subtitles are not moved by cut_range yet"));
+    if (timeline->hasSubtitleModel() && timeline->getSubtitleModel()->count() > 0 && timeline->getSubtitleModel()->isLocked()) {
+        warnings << issue(op, QString(), QStringLiteral("the subtitle track is locked: its subtitles are not moved and fall out of sync"));
     }
     return true;
+}
+
+bool checkAddSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIssue &error)
+{
+    if (!timeline->hasSubtitleModel()) {
+        return true; // the subtitle track is created when the op runs
+    }
+    const auto subs = timeline->getSubtitleModel();
+    if (subs->isLocked()) {
+        error = issue(op, QStringLiteral("items"), QStringLiteral("the subtitle track is locked"));
+        return false;
+    }
+    const int layer = op.frame(QStringLiteral("layer"));
+    if (layer > subs->getMaxLayer()) {
+        error = issue(op, QStringLiteral("layer"), QStringLiteral("subtitle layer %1 does not exist (layers 0..%2)").arg(layer).arg(subs->getMaxLayer()));
+        return false;
+    }
+    const QJsonArray items = op.params.value(QLatin1String("items")).toArray();
+    for (int i = 0; i < items.size(); ++i) {
+        const QJsonObject item = items.at(i).toObject();
+        const int start = item.value(QLatin1String("start_f")).toInt();
+        const int end = item.value(QLatin1String("end_f")).toInt();
+        const auto existing = OpValidator::subtitlesIn(timeline, layer, start, end);
+        if (!existing.isEmpty()) {
+            const SubtitleSpan &other = existing.first();
+            error = issue(op, QStringLiteral("items"),
+                          QStringLiteral("items[%1] [%2, %3) overlaps subtitle %4 at [%5, %6) on layer %7; clear_subtitles first")
+                              .arg(i)
+                              .arg(start)
+                              .arg(end)
+                              .arg(other.id)
+                              .arg(other.start)
+                              .arg(other.end)
+                              .arg(layer));
+            return false;
+        }
+    }
+    return true;
+}
+
+bool checkClearSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIssue &error, QList<OpIssue> &warnings)
+{
+    if (!timeline->hasSubtitleModel() || timeline->getSubtitleModel()->count() == 0) {
+        warnings << issue(op, QString(), QStringLiteral("there are no subtitles to clear"));
+        return true;
+    }
+    if (timeline->getSubtitleModel()->isLocked()) {
+        error = issue(op, QStringLiteral("start_f"), QStringLiteral("the subtitle track is locked"));
+        return false;
+    }
+    return true;
+}
+
+bool frameValue(const QJsonValue &v)
+{
+    return v.isDouble() && std::floor(v.toDouble()) == v.toDouble() && v.toDouble() >= 0 && v.toDouble() <= INT_MAX;
+}
+
+/** Static checks of add_subtitles items: fields, ranges, no overlap between the items themselves. */
+void checkItems(const Op &op, QList<OpIssue> &errors)
+{
+    const QJsonArray items = op.params.value(QLatin1String("items")).toArray();
+    QList<std::tuple<int, int, int>> spans; // start, end, index
+    for (int i = 0; i < items.size(); ++i) {
+        const QJsonObject item = items.at(i).toObject();
+        const QJsonValue start = item.value(QLatin1String("start_f"));
+        const QJsonValue end = item.value(QLatin1String("end_f"));
+        const QJsonValue text = item.value(QLatin1String("text"));
+        const QJsonValue speaker = item.value(QLatin1String("speaker"));
+        QString problem;
+        if (!items.at(i).isObject()) {
+            problem = QStringLiteral("must be an object {start_f, end_f, text, speaker?}");
+        } else if (!frameValue(start) || !frameValue(end) || end.toInt() <= start.toInt()) {
+            problem = QStringLiteral("needs integer frames start_f >= 0 and end_f > start_f");
+        } else if (!text.isString() || text.toString().trimmed().isEmpty() || text.toString().size() > 500) {
+            problem = QStringLiteral("text must be a string of 1..500 characters");
+        } else if (!speaker.isUndefined() && !speaker.isNull() && (!speaker.isString() || speaker.toString().size() > 60)) {
+            problem = QStringLiteral("speaker must be a string of at most 60 characters");
+        }
+        if (!problem.isEmpty()) {
+            errors << issue(op, QStringLiteral("items"), QStringLiteral("items[%1] %2").arg(i).arg(problem));
+            return;
+        }
+        spans << std::make_tuple(start.toInt(), end.toInt(), i);
+    }
+    std::sort(spans.begin(), spans.end());
+    for (int k = 1; k < spans.size(); ++k) {
+        if (std::get<0>(spans[k]) < std::get<1>(spans[k - 1])) {
+            errors << issue(op, QStringLiteral("items"),
+                            QStringLiteral("items[%1] [%2, %3) overlaps items[%4] [%5, %6)")
+                                .arg(std::get<2>(spans[k]))
+                                .arg(std::get<0>(spans[k]))
+                                .arg(std::get<1>(spans[k]))
+                                .arg(std::get<2>(spans[k - 1]))
+                                .arg(std::get<0>(spans[k - 1]))
+                                .arg(std::get<1>(spans[k - 1])));
+            return;
+        }
+    }
 }
 
 bool checkSplit(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIssue &error)
@@ -475,6 +577,14 @@ bool checkParamValue(const ParamSpec &spec, const QJsonValue &value, QString &me
             return false;
         }
         return true;
+    case ParamType::Items: {
+        const int count = value.isArray() ? int(value.toArray().size()) : -1;
+        if (count < int(spec.min) || (spec.max > 0 && count > int(spec.max))) {
+            message = QStringLiteral("%1 must be an array of %2..%3 items").arg(spec.name).arg(spec.min).arg(spec.max);
+            return false;
+        }
+        return true;
+    }
     }
     return true;
 }
@@ -578,6 +688,13 @@ QList<Op> parse(const QJsonValue &ops, QList<OpIssue> &errors, QList<OpIssue> &w
         if (op.type == QLatin1String("trim") && !op.has(QStringLiteral("start_f")) && !op.has(QStringLiteral("end_f"))) {
             errors << issue(op, QStringLiteral("end_f"), QStringLiteral("trim needs start_f, end_f or both"));
         }
+        static const QRegularExpression colour(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+        if (op.has(QStringLiteral("color")) && !colour.match(op.string(QStringLiteral("color"))).hasMatch()) {
+            errors << issue(op, QStringLiteral("color"), QStringLiteral("color must look like #FFD400"));
+        }
+        if (op.type == QLatin1String("add_subtitles") && op.params.value(QLatin1String("items")).isArray()) {
+            checkItems(op, errors);
+        }
         parsed << op;
     }
     return parsed;
@@ -606,6 +723,12 @@ bool checkState(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIs
     }
     if (op.type == QLatin1String("title_card") || op.type == QLatin1String("caption")) {
         return checkText(timeline, op, error, warnings);
+    }
+    if (op.type == QLatin1String("add_subtitles")) {
+        return checkAddSubtitles(timeline, op, error);
+    }
+    if (op.type == QLatin1String("clear_subtitles")) {
+        return checkClearSubtitles(timeline, op, error, warnings);
     }
     error = issue(op, QStringLiteral("type"), QStringLiteral("no state check for %1").arg(op.type));
     return false;
@@ -673,6 +796,25 @@ std::unordered_set<int> groupOf(const std::shared_ptr<TimelineItemModel> &timeli
         }
     }
     return clips;
+}
+
+QList<SubtitleSpan> subtitlesIn(const std::shared_ptr<TimelineItemModel> &timeline, int layer, int start, int end)
+{
+    QList<SubtitleSpan> found;
+    if (!timeline->hasSubtitleModel()) {
+        return found;
+    }
+    const auto subs = timeline->getSubtitleModel();
+    const double fps = pCore->getCurrentFps();
+    for (const auto &entry : subs->getAllSubtitles()) {
+        const int s = entry.first.second.frames(fps);
+        const int e = entry.second.endTime().frames(fps);
+        if ((layer < 0 || entry.first.first == layer) && s < end && e > start) {
+            found << SubtitleSpan{subs->getIdForStartPos(entry.first.first, entry.first.second), entry.first.first, s, e};
+        }
+    }
+    std::sort(found.begin(), found.end(), [](const SubtitleSpan &a, const SubtitleSpan &b) { return std::tie(a.start, a.layer) < std::tie(b.start, b.layer); });
+    return found;
 }
 
 std::shared_ptr<ProjectClip> sourceClip(const QString &binId)

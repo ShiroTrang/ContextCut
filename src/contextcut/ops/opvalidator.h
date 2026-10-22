@@ -27,6 +27,15 @@ struct OpIssue
     QJsonObject toJson() const;
 };
 
+/** @brief A subtitle on the sequence's subtitle track, in timeline frames. */
+struct SubtitleSpan
+{
+    int id{-1};
+    int layer{0};
+    int start{0};
+    int end{0};
+};
+
 /** @brief One op of a batch: raw params with defaults filled in, plus what checkState resolved on the current timeline. */
 struct Op
 {
@@ -63,6 +72,9 @@ int resolveTrack(const std::shared_ptr<TimelineItemModel> &timeline, const QJson
 std::unordered_set<int> groupOf(const std::shared_ptr<TimelineItemModel> &timeline, int clipId);
 /** @brief Top group of @p clipId below the temporary selection group, or -1 when the clip is not grouped. */
 int groupRoot(const std::shared_ptr<TimelineItemModel> &timeline, int clipId);
+
+/** @brief Subtitles of @p layer (-1 = every layer) intersecting [start, end), sorted by start then layer. */
+QList<SubtitleSpan> subtitlesIn(const std::shared_ptr<TimelineItemModel> &timeline, int layer, int start, int end);
 
 /** @brief Bin clip for a source id, or nullptr. */
 std::shared_ptr<ProjectClip> sourceClip(const QString &binId);

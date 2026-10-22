@@ -39,7 +39,10 @@ QJsonObject sourceObject(const std::shared_ptr<ProjectClip> &clip);
 /** @brief Every bin clip (recordings, music, images, titles…), for picking a source id (P1c). */
 JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision);
 
-/** @brief Registers get_editor_state, get_timeline, list_recordings and list_sources on @p server. */
+/** @brief Subtitles of the sequence's subtitle track in a frame range, paged (P2a, docs/protocol.md §8.9). */
+JsonRpc::RpcResult subtitles(const QJsonObject &params, qint64 revision);
+
+/** @brief Registers get_editor_state, get_timeline, list_recordings, list_sources and list_subtitles on @p server. */
 void registerReadOnlyMethods(AiBridgeServer &server);
 
 } // namespace ContextCut::EditorReader

@@ -17,7 +17,8 @@ from contextcut_ai.errors import BridgeUnavailable, RpcError
 
 pytestmark = [pytest.mark.anyio, pytest.mark.live]
 
-OPS = {"cut_range", "split", "trim", "move", "insert_clip", "add_music", "title_card", "caption"}
+OPS = {"cut_range", "split", "trim", "move", "insert_clip", "add_music", "title_card", "caption", "add_subtitles",
+       "clear_subtitles"}
 
 
 @pytest.fixture
@@ -113,7 +114,7 @@ async def expect_error(coro, kind: str) -> RpcError:
     return info.value
 
 
-async def test_list_operations_has_eight_ops(app):
+async def test_list_operations_has_all_ops(app):
     ops = {op["type"]: op for op in (await app.call("list_operations"))["ops"]}
     assert set(ops) == OPS
     for op in ops.values():

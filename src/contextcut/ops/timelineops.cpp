@@ -5,7 +5,9 @@
 
 #include "timelineops.h"
 #include "bin/model/markerlistmodel.hpp"
+#include "bin/model/subtitlemodel.hpp"
 #include "core.h"
+#include "mainwindow.h"
 #include "effects/effectstack/model/effectstackmodel.hpp"
 #include "kdenlivesettings.h"
 #include "timelineaccess.h"
@@ -14,8 +16,11 @@
 
 #include <QDomDocument>
 #include <QHash>
+#include <QJsonArray>
+#include <QLocale>
 #include <QPoint>
 #include <QVector>
+#include <climits>
 
 namespace ContextCut::TimelineOps {
 
@@ -28,6 +33,81 @@ bool fail(OpOutcome &outcome, const QString &field, const QString &error)
     outcome.field = field;
     outcome.error = error;
     return false;
+}
+
+/** Subtitle edits pass updateFilter=false (rewriting the subtitle file per line is slow); this rewrites it once. Call with
+    @p last false before the edits (it then runs last on undo) and with @p last true after them (runs last on redo, and now). */
+void refreshSubtitles(const std::shared_ptr<SubtitleModel> &subs, bool last, Fun &undo, Fun &redo)
+{
+    Fun refresh = [weak = std::weak_ptr<SubtitleModel>(subs)]() {
+        if (auto model = weak.lock()) {
+            Q_EMIT model->modelChanged();
+        }
+        return true;
+    };
+    Fun noop = []() { return true; };
+    if (last) {
+        refresh();
+        UPDATE_UNDO_REDO_NOLOCK(refresh, noop, undo, redo);
+    } else {
+        UPDATE_UNDO_REDO_NOLOCK(noop, refresh, undo, redo);
+    }
+}
+
+/** Removes one subtitle with undo (TimelineModel::requestSubtitleDeletion is protected; same lambdas). */
+bool removeSubtitle(const std::shared_ptr<SubtitleModel> &subs, int id, Fun &undo, Fun &redo)
+{
+    const GenTime start = subs->getSubtitlePosition(id);
+    const int layer = subs->getLayerForId(id);
+    const SubtitleEvent event = subs->getSubtitle(layer, start);
+    Fun operation = [subs, id]() { return subs->removeSubtitle(id, false, false); };
+    Fun reverse = [subs, id, layer, start, event]() { return subs->addSubtitle(id, {layer, start}, event, false, false); };
+    if (!operation()) {
+        return false;
+    }
+    UPDATE_UNDO_REDO_NOLOCK(operation, reverse, undo, redo);
+    return true;
+}
+
+/** cut_range on the subtitle track: subtitles inside [start, end) go, those crossing it shrink, later ones move back. */
+bool shiftSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, int start, int end, Fun &undo, Fun &redo, OpOutcome &outcome)
+{
+    if (!timeline->hasSubtitleModel() || timeline->getSubtitleModel()->count() == 0 || timeline->getSubtitleModel()->isLocked()) {
+        return true;
+    }
+    const auto subs = timeline->getSubtitleModel();
+    const int length = end - start;
+    const QList<SubtitleSpan> all = OpValidator::subtitlesIn(timeline, -1, 0, INT_MAX);
+    refreshSubtitles(subs, false, undo, redo);
+    // Deletions and shrinks first, so moved subtitles never land on a start position still in use
+    for (const SubtitleSpan &s : all) {
+        bool ok = true;
+        if (s.start >= start && s.end <= end) {
+            ok = step(undo, redo, [&](Fun &u, Fun &r) { return removeSubtitle(subs, s.id, u, r); });
+        } else if (s.start < start && s.end > start) {
+            const int newEnd = s.end >= end ? s.end - length : start;
+            ok = step(undo, redo, [&](Fun &u, Fun &r) { return subs->requestResize(s.id, newEnd - s.start, true, u, r, false); });
+        }
+        if (!ok) {
+            return fail(outcome, QStringLiteral("start_f"), QStringLiteral("Kdenlive could not cut subtitle %1").arg(s.id));
+        }
+    }
+    for (const SubtitleSpan &s : all) {
+        bool ok = true;
+        if (s.start >= start && s.start < end && s.end > end) {
+            ok = step(undo, redo, [&](Fun &u, Fun &r) {
+                return timeline->requestSubtitleMove(s.id, s.layer, start, true, false, false, false, u, r) &&
+                       subs->requestResize(s.id, s.end - end, true, u, r, false);
+            });
+        } else if (s.start >= end) {
+            ok = step(undo, redo, [&](Fun &u, Fun &r) { return timeline->requestSubtitleMove(s.id, s.layer, s.start - length, true, false, false, false, u, r); });
+        }
+        if (!ok) {
+            return fail(outcome, QStringLiteral("start_f"), QStringLiteral("Kdenlive could not move subtitle %1").arg(s.id));
+        }
+    }
+    refreshSubtitles(subs, true, undo, redo);
+    return true;
 }
 
 QList<int> trackIdsTopDown(const std::shared_ptr<TimelineItemModel> &timeline)
@@ -87,7 +167,7 @@ bool cutRange(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, 
             return fail(outcome, QStringLiteral("start_f"), QStringLiteral("Kdenlive could not move the guides after the range"));
         }
     }
-    return true;
+    return shiftSubtitles(timeline, start, end, undo, redo, outcome);
 }
 
 bool split(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, Fun &undo, Fun &redo, OpOutcome &outcome)
@@ -235,7 +315,7 @@ bool addMusic(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, 
 }
 
 bool addText(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, TitleStyle style, const QString &text, Fun &undo, Fun &redo,
-             OpOutcome &outcome)
+             OpOutcome &outcome, const QString &color = QString())
 {
     const int start = op.frame(QStringLiteral("start_f"));
     const int duration = op.frame(QStringLiteral("end_f")) - start;
@@ -244,7 +324,7 @@ bool addText(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, T
         name = name.left(TitleNameLength - 1) + QStringLiteral("…");
     }
     QString binId;
-    const QString xml = TitleClip::xml(text, style, pCore->getCurrentFrameSize(), duration);
+    const QString xml = TitleClip::xml(text, style, pCore->getCurrentFrameSize(), duration, color);
     if (!step(undo, redo, [&](Fun &u, Fun &r) { return TitleClip::addToBin(xml, duration, name, binId, u, r); })) {
         return fail(outcome, QStringLiteral("text"), QStringLiteral("Kdenlive could not create the title clip"));
     }
@@ -269,8 +349,73 @@ bool caption(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, F
                              : styleName == QLatin1String("pop") ? TitleStyle::CaptionPop
                                                                  : TitleStyle::CaptionBottom;
     const QString speaker = op.string(QStringLiteral("speaker")).trimmed();
-    const QString text = op.string(QStringLiteral("text"));
-    return addText(timeline, op, style, speaker.isEmpty() ? text : QStringLiteral("%1: %2").arg(speaker, text), undo, redo, outcome);
+    QString text = op.string(QStringLiteral("text"));
+    if (!speaker.isEmpty() && op.flag(QStringLiteral("label"))) {
+        text = QStringLiteral("%1: %2").arg(speaker, text);
+    }
+    if (op.flag(QStringLiteral("uppercase"))) {
+        text = QLocale(QLocale::Vietnamese).toUpper(text);
+    }
+    return addText(timeline, op, style, text, undo, redo, outcome, op.string(QStringLiteral("color")));
+}
+
+bool addSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, Fun &undo, Fun &redo, OpOutcome &outcome)
+{
+    if (!timeline->hasSubtitleModel()) {
+        // Creating the subtitle track is not an undo step in Kdenlive either (MainWindow::slotAddSubtitle)
+        pCore->window()->showSubtitleTrack();
+    }
+    const auto subs = timeline->getSubtitleModel();
+    if (!subs) {
+        return fail(outcome, QStringLiteral("items"), QStringLiteral("Kdenlive could not create the subtitle track"));
+    }
+    const double fps = pCore->getCurrentFps();
+    const int layer = op.frame(QStringLiteral("layer"));
+    const QJsonArray items = op.params.value(QLatin1String("items")).toArray();
+    refreshSubtitles(subs, false, undo, redo);
+    for (int i = 0; i < items.size(); ++i) {
+        const QJsonObject item = items.at(i).toObject();
+        const GenTime start(item.value(QLatin1String("start_f")).toInt(), fps);
+        const SubtitleEvent event(true, GenTime(item.value(QLatin1String("end_f")).toInt(), fps), QStringLiteral("Default"),
+                                  item.value(QLatin1String("speaker")).toString(), 0, 0, 0, QString(), item.value(QLatin1String("text")).toString());
+        // SubtitleModel::addSubtitle(…, undo, redo) reports success even when the model refuses the line: check first and after
+        const bool free = subs->getIdForStartPos(layer, start) < 0;
+        if (free) {
+            step(undo, redo, [&](Fun &u, Fun &r) { return subs->addSubtitle({layer, start}, event, u, r, false); });
+        }
+        const int id = free ? subs->getIdForStartPos(layer, start) : -1;
+        if (id < 0) {
+            return fail(outcome, QStringLiteral("items"), QStringLiteral("Kdenlive refused items[%1] (a subtitle already starts at frame %2 on layer %3)")
+                                                                .arg(i)
+                                                                .arg(item.value(QLatin1String("start_f")).toInt())
+                                                                .arg(layer));
+        }
+        outcome.created << id;
+    }
+    refreshSubtitles(subs, true, undo, redo);
+    return true;
+}
+
+bool clearSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, Fun &undo, Fun &redo, OpOutcome &outcome)
+{
+    if (!timeline->hasSubtitleModel()) {
+        return true;
+    }
+    const auto subs = timeline->getSubtitleModel();
+    const int start = op.frame(QStringLiteral("start_f"));
+    const int end = op.frame(QStringLiteral("end_f"));
+    const int layer = op.has(QStringLiteral("layer")) ? op.frame(QStringLiteral("layer")) : -1;
+    refreshSubtitles(subs, false, undo, redo);
+    for (const SubtitleSpan &s : OpValidator::subtitlesIn(timeline, layer, start, INT_MAX)) {
+        if (s.start >= end) {
+            break;
+        }
+        if (s.start >= start && !step(undo, redo, [&](Fun &u, Fun &r) { return removeSubtitle(subs, s.id, u, r); })) {
+            return fail(outcome, QStringLiteral("start_f"), QStringLiteral("Kdenlive could not remove subtitle %1").arg(s.id));
+        }
+    }
+    refreshSubtitles(subs, true, undo, redo);
+    return true;
 }
 
 } // namespace
@@ -299,7 +444,8 @@ OpFn find(const QString &type)
     static const QHash<QString, OpFn> ops{{QStringLiteral("cut_range"), cutRange},   {QStringLiteral("split"), split},
                                           {QStringLiteral("trim"), trim},            {QStringLiteral("move"), move},
                                           {QStringLiteral("insert_clip"), insertClip}, {QStringLiteral("add_music"), addMusic},
-                                          {QStringLiteral("title_card"), titleCard}, {QStringLiteral("caption"), caption}};
+                                          {QStringLiteral("title_card"), titleCard}, {QStringLiteral("caption"), caption},
+                                          {QStringLiteral("add_subtitles"), addSubtitles}, {QStringLiteral("clear_subtitles"), clearSubtitles}};
     return ops.value(type, nullptr);
 }
 

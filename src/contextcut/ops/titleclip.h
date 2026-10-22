@@ -18,8 +18,9 @@ enum class TitleStyle { CardBlack, CardDim, CaptionBottom, CaptionTop, CaptionPo
     opens and edits them in its titler. */
 namespace TitleClip {
 
-/** @brief kdenlivetitle document: centred text in Segoe UI bold, sized and placed for @p style on a @p frame sized canvas. */
-QString xml(const QString &text, TitleStyle style, QSize frame, int duration);
+/** @brief kdenlivetitle document: centred text in Segoe UI bold, sized and placed for @p style on a @p frame sized canvas;
+    @p color (#RRGGBB) replaces the style's text colour. */
+QString xml(const QString &text, TitleStyle style, QSize frame, int duration, const QString &color = QString());
 
 /** @brief Adds a title clip of @p duration frames to the bin root. The producer is built here, so the clip is ready at once and
     can be inserted in the same batch (ClipCreator::createTitleClip loads it asynchronously instead). */

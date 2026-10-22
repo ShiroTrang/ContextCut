@@ -11,6 +11,7 @@
 #include "bin/projectitemmodel.h"
 #include "contextcut/bridge/aibridgeserver.h"
 #include "contextcut/bridge/revisiontracker.h"
+#include "contextcut/ops/opvalidator.h"
 #include "core.h"
 #include "doc/docundostack.hpp"
 #include "doc/kdenlivedoc.h"
@@ -40,6 +41,8 @@ constexpr qint64 TimelinePageMax = 1000;
 constexpr qint64 RecordingPageDefault = 100;
 constexpr qint64 RecordingPageMax = 500;
 constexpr int GuidesMax = 1000;
+constexpr qint64 SubtitlePageDefault = 200;
+constexpr qint64 SubtitlePageMax = 1000;
 
 QJsonValue nullIfEmpty(const QString &text)
 {
@@ -572,6 +575,51 @@ JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision)
                                               {QStringLiteral("next_cursor"), nextCursor(revision, offset, limit, total)}});
 }
 
+JsonRpc::RpcResult subtitles(const QJsonObject &params, qint64 revision)
+{
+    JsonRpc::RpcError error;
+    const auto timeline = activeTimeline(error);
+    if (!timeline) {
+        return JsonRpc::RpcResult::fail(error);
+    }
+    qint64 start = 0;
+    qint64 end = INT_MAX;
+    qint64 offset = 0;
+    qint64 limit = 0;
+    if (!JsonRpc::optionalInt(params, QStringLiteral("start_f"), 0, INT_MAX, start, error) ||
+        !JsonRpc::optionalInt(params, QStringLiteral("end_f"), 1, INT_MAX, end, error) ||
+        !readPage(params, revision, SubtitlePageDefault, SubtitlePageMax, offset, limit, error)) {
+        return JsonRpc::RpcResult::fail(error);
+    }
+    if (end <= start) {
+        return JsonRpc::RpcResult::fail(JsonRpc::invalidParams(QStringLiteral("end_f"), QStringLiteral("end_f must be greater than start_f")));
+    }
+    const QList<SubtitleSpan> spans = OpValidator::subtitlesIn(timeline, -1, int(start), int(end));
+    const qint64 total = spans.size();
+    if (offset > total) {
+        return JsonRpc::RpcResult::fail(JsonRpc::staleCursor(revision));
+    }
+    const auto subs = timeline->hasSubtitleModel() ? timeline->getSubtitleModel() : nullptr;
+    QJsonArray items;
+    for (qint64 i = offset; i < std::min(total, offset + limit); ++i) {
+        const SubtitleSpan &s = spans.at(i);
+        items.append(QJsonObject{{QStringLiteral("id"), s.id},
+                                 {QStringLiteral("layer"), s.layer},
+                                 {QStringLiteral("start_f"), s.start},
+                                 {QStringLiteral("end_f"), s.end},
+                                 {QStringLiteral("text"), subs->getText(s.id)},
+                                 {QStringLiteral("speaker"), subs->getName(s.id)}});
+    }
+    const QJsonObject track{{QStringLiteral("exists"), subs != nullptr},
+                            {QStringLiteral("locked"), subs ? subs->isLocked() : false},
+                            {QStringLiteral("disabled"), subs ? subs->isDisabled() : false},
+                            {QStringLiteral("layers"), subs ? subs->getMaxLayer() + 1 : 0}};
+    return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("revision"), revision},
+                                              {QStringLiteral("track"), track},
+                                              {QStringLiteral("items"), items},
+                                              {QStringLiteral("next_cursor"), nextCursor(revision, offset, limit, total)}});
+}
+
 void registerReadOnlyMethods(AiBridgeServer &server)
 {
     AiBridgeServer *bridge = &server;
@@ -581,6 +629,8 @@ void registerReadOnlyMethods(AiBridgeServer &server)
     server.registerMethod(QStringLiteral("list_recordings"),
                           [bridge](const QJsonObject &params) { return recordings(params, bridge->revisions()->current()); });
     server.registerMethod(QStringLiteral("list_sources"), [bridge](const QJsonObject &params) { return sources(params, bridge->revisions()->current()); });
+    server.registerMethod(QStringLiteral("list_subtitles"),
+                          [bridge](const QJsonObject &params) { return subtitles(params, bridge->revisions()->current()); });
 }
 
 } // namespace ContextCut::EditorReader

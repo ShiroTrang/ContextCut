@@ -13,7 +13,7 @@
 
 namespace ContextCut {
 
-enum class ParamType { Frame, Int, Number, String, Enum, Bool, Track, Clip, Source };
+enum class ParamType { Frame, Int, Number, String, Enum, Bool, Track, Clip, Source, Items };
 
 /** @brief One parameter of an op, as published by list_operations (docs/protocol.md §8.5). */
 struct ParamSpec
@@ -22,7 +22,7 @@ struct ParamSpec
     ParamType type;
     bool required;
     QString description;
-    /** @brief Value range for numbers, length range for strings; max 0 means unbounded */
+    /** @brief Value range for numbers, length range for strings, item count for items; max 0 means unbounded */
     double min{0};
     double max{0};
     QStringList values;

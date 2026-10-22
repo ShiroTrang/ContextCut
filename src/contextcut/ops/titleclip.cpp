@@ -8,6 +8,7 @@
 #include "bin/projectitemmodel.h"
 #include "core.h"
 
+#include <QColor>
 #include <QDomDocument>
 #include <QFont>
 #include <QFontMetricsF>
@@ -59,9 +60,12 @@ QDomElement positioned(QDomDocument &doc, const QString &type, int z, double x, 
 
 } // namespace
 
-QString xml(const QString &text, TitleStyle style, QSize frame, int duration)
+QString xml(const QString &text, TitleStyle style, QSize frame, int duration, const QString &color)
 {
-    const Look look = lookFor(style);
+    Look look = lookFor(style);
+    if (const QColor custom(color); !color.isEmpty() && custom.isValid()) {
+        look.color = QStringLiteral("%1,%2,%3,255").arg(custom.red()).arg(custom.green()).arg(custom.blue());
+    }
     const int width = frame.width();
     const int height = frame.height();
     QFont font(QStringLiteral("Segoe UI"));

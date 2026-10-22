@@ -13,6 +13,7 @@ namespace ContextCut::OpRegistry {
 namespace {
 
 constexpr double MaxFrame = INT_MAX;
+constexpr int MaxSubtitleItems = 5000;
 
 ParamSpec frame(const QString &name, bool required, const QString &description)
 {
@@ -53,6 +54,16 @@ QList<OpSpec> buildSpecs()
     gain.defaultValue = 0;
     ParamSpec musicIn = frame(QStringLiteral("in_f"), false, QStringLiteral("First source frame used (default 0)"));
     musicIn.defaultValue = 0;
+    ParamSpec uppercase{QStringLiteral("uppercase"), ParamType::Bool, false, QStringLiteral("Write the whole line in capitals (default false)")};
+    uppercase.defaultValue = false;
+    ParamSpec label{QStringLiteral("label"), ParamType::Bool, false, QStringLiteral("Prefix \"<speaker>: \" when speaker is set (default true)")};
+    label.defaultValue = true;
+    const ParamSpec items{QStringLiteral("items"), ParamType::Items, true,
+                          QStringLiteral("Subtitle lines [{start_f, end_f, text (1..500, \n = new line), speaker?}] in timeline frames; lines must "
+                                         "not overlap each other or existing subtitles on the layer"),
+                          1, double(MaxSubtitleItems)};
+    ParamSpec subtitleLayer{QStringLiteral("layer"), ParamType::Int, false, QStringLiteral("Subtitle layer (default 0)"), 0, 100};
+    subtitleLayer.defaultValue = 0;
 
     return {
         {QStringLiteral("cut_range"),
@@ -99,10 +110,20 @@ QList<OpSpec> buildSpecs()
          {text(QStringLiteral("text"), true, 300, QStringLiteral("Text; \\n for a new line")),
           frame(QStringLiteral("start_f"), true, QStringLiteral("Timeline start frame")),
           frame(QStringLiteral("end_f"), true, QStringLiteral("Timeline end frame, exclusive (> start_f)")),
-          text(QStringLiteral("speaker"), false, 60, QStringLiteral("Prefixed as \"<speaker>: \"")), track(QStringLiteral("track"), false, textTrack),
+          text(QStringLiteral("speaker"), false, 60, QStringLiteral("Who says it; prefixed as \"<speaker>: \" unless label is false")),
+          track(QStringLiteral("track"), false, textTrack),
           choice(QStringLiteral("style"), {QStringLiteral("bottom"), QStringLiteral("top"), QStringLiteral("pop")},
                  QStringLiteral("bottom/top: position; pop: big yellow text in the upper third")),
+          text(QStringLiteral("color"), false, 7, QStringLiteral("Text colour #RRGGBB instead of the style's (e.g. per speaker)")), uppercase, label,
           reason}},
+        {QStringLiteral("add_subtitles"),
+         QStringLiteral("Add lines to the sequence's subtitle track (created if missing); created = the new subtitle ids"),
+         {items, subtitleLayer, reason}},
+        {QStringLiteral("clear_subtitles"),
+         QStringLiteral("Remove the subtitles that start inside [start_f, end_f); put it before add_subtitles to replace a range in one undo step"),
+         {frame(QStringLiteral("start_f"), true, QStringLiteral("First timeline frame")),
+          frame(QStringLiteral("end_f"), true, QStringLiteral("Timeline frame after the range (> start_f)")),
+          {QStringLiteral("layer"), ParamType::Int, false, QStringLiteral("Only this subtitle layer (default: every layer)"), 0, 100}, reason}},
     };
 }
 
@@ -127,6 +148,8 @@ QString typeName(ParamType type)
         return QStringLiteral("clip");
     case ParamType::Source:
         return QStringLiteral("source");
+    case ParamType::Items:
+        return QStringLiteral("items");
     }
     return QString();
 }
@@ -159,10 +182,11 @@ QJsonObject listOperations()
                               {QStringLiteral("required"), param.required},
                               {QStringLiteral("description"), param.description}};
             const bool lengthRange = param.type == ParamType::String;
-            if (param.type == ParamType::Frame || param.type == ParamType::Int || param.type == ParamType::Number || lengthRange) {
-                entry.insert(lengthRange ? QStringLiteral("min_length") : QStringLiteral("min"), param.min);
+            const bool countRange = param.type == ParamType::Items;
+            if (param.type == ParamType::Frame || param.type == ParamType::Int || param.type == ParamType::Number || lengthRange || countRange) {
+                entry.insert(countRange ? QStringLiteral("min_items") : lengthRange ? QStringLiteral("min_length") : QStringLiteral("min"), param.min);
                 if (param.max > 0) {
-                    entry.insert(lengthRange ? QStringLiteral("max_length") : QStringLiteral("max"), param.max);
+                    entry.insert(countRange ? QStringLiteral("max_items") : lengthRange ? QStringLiteral("max_length") : QStringLiteral("max"), param.max);
                 }
             }
             if (!param.values.isEmpty()) {
