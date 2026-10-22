@@ -1,10 +1,10 @@
 # Giao thức cầu nối ContextCut (AI Bridge) — v1
 
-21/10/2026, cập nhật 22/10/2026 (P1c, P2a) · trạng thái: **hợp đồng cho P1–P2** (P1a, P1c, P2a cài; P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
+21/10/2026, cập nhật 22/10/2026 (P1c, P2a, P2b) · trạng thái: **hợp đồng cho P1–P2** (P1a, P1c, P2a, P2b cài; P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
 
 App ContextCut (C++) mở một server WebSocket cục bộ. Dịch vụ Python `contextcut-ai` (MCP server) là client duy nhất dự kiến; AI client (Claude, Codex, Antigravity) không nói chuyện thẳng với cầu nối. Tài liệu này là hợp đồng giữa hai bên: đổi thứ gì ở đây thì tăng `protocol` hoặc ghi rõ là trường mới không bắt buộc.
 
-Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026); **[P2a]** cài ở P2a.
+Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026); **[P2a]** cài ở P2a; **[P2b]** cài ở P2b.
 
 ## 1. Tìm app và kết nối
 
@@ -115,6 +115,8 @@ Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429
 | `undo_batch` | Hoàn tác đợt vừa áp dụng (khi còn là bước undo trên cùng) | P1c |
 | `import_media` | Nhập một file media vào bin (một bước undo) | P1c |
 | `list_subtitles` | Phụ đề trên track phụ đề của sequence đang mở; phân trang | P2a |
+| `get_scene` | XML MLT của sequence đang mở như khi xuất (để `melt` dựng khung hình, xuất file) | P2b |
+| `get_viewer_frame` | Khung hình monitor đang hiện (JPEG), tuỳ chọn dời playhead trước | P2b |
 
 ### 8.1 `auth` [P1a]
 
@@ -305,6 +307,7 @@ Mọi khoảng nửa mở; mọi op nhận thêm `reason`.
 | `add_subtitles` **[P2a]** | `items` (1…5000 phần tử `{start_f, end_f, text (1…500), speaker?}`), `layer?` (0) | Thêm từng dòng vào **track phụ đề** của sequence (tạo track nếu chưa có, như khi thêm phụ đề tay). Các dòng không được chồng nhau, không chồng phụ đề có sẵn trên layer đó, track phụ đề không khoá. `speaker` ghi vào trường Name của sự kiện ASS. `
 ` trong `text` là xuống dòng. `created` = id phụ đề mới. |
 | `clear_subtitles` **[P2a]** | `start_f`, `end_f`, `layer?` | Xoá phụ đề **bắt đầu** trong `[start_f, end_f)` (bỏ trống `layer` = mọi layer). Đặt trước `add_subtitles` trong cùng đợt để thay phụ đề một đoạn bằng một bước undo. |
+| `zoom` **[P2b]** | `start_f`, `end_f`, `scale?` (1.05…4, mặc định 1.2), `focus_x?`, `focus_y?` (0…1, mặc định 0.5), `ramp_in_f?` (mặc định ≈ 0,2 s), `ramp_out_f?` (0), `ease?` (`out` \| `in` \| `linear` \| `smooth`, mặc định `out`), `track?` | Zoom vào khung: cắt clip hình phủ trọn khoảng tại `start_f`/`end_f` (khi hai mốc nằm giữa clip; clip cặp tiếng cắt theo), thêm hiệu ứng **Transform** (`qtblend`) có keyframe `rect` vào clip ở giữa: từ 1 lên `scale` trong `ramp_in_f` frame đầu, giữ, về 1 trong `ramp_out_f` frame cuối (0 = cắt thẳng về khung thường ở `end_f`). Điểm (`focus_x`, `focus_y`) của khung (0,0 = góc trái trên) đứng yên khi zoom. `ease` là kiểu keyframe MLT của đoạn chuyển (`cubic_out`, `cubic_in`, `linear`, `smooth_natural`). Track mặc định: track video không khoá trên cùng có clip **từ file có hình** (không phải title, màu) phủ trọn khoảng. Lỗi: khoảng không nằm trọn trong một clip, clip đã có Transform, `ramp_in_f + ramp_out_f > end_f − start_f`. `created` = `[id clip mang zoom]`. |
 
 Kiểm trước khi chạy (validator P1, thêm phụ đề ở P2a): op có trong registry; tham số đúng kiểu và khoảng; track có, không khoá, đúng loại (op hình → track video; `add_music` → track audio); clip có, không nằm trên track khoá, không có mix (chuyển cảnh cùng track) khi `trim`/`move`; nguồn có trong bin, đã nạp, có hình/tiếng mà op cần; frame trong độ dài nguồn; khoảng đích trống trên track. Quy tắc §8.6 của thiết kế (giữa từ, giữa phản ứng, shot quá ngắn) chờ transcript (P2–P4).
 
@@ -342,6 +345,45 @@ Tham số (đều không bắt buộc): `start_f` (0), `end_f` (hết timeline),
 ```
 
 `id` là id phụ đề của mô hình timeline (chỉ đúng trong một lần chạy app, như id clip). `speaker` là trường Name của sự kiện ASS (`""` nếu trống). Cursor theo §7.
+
+### 8.10 `get_scene` [P2b]
+
+Tham số: `originals` (bool, mặc định `true`). Không có project → `no_project`/`busy`.
+
+```json
+{"revision": 1873460,
+ "xml": "<?xml version='1.0' encoding='utf-8'?>
+<mlt LC_NUMERIC=\"C\" root=\"D:/Videos\" …>…</mlt>",
+ "root": "D:/Videos",
+ "profile": {"fps": {"num": 25, "den": 1}, "width": 1920, "height": 1080},
+ "duration_f": 30750,
+ "proxies": true}
+```
+
+- `xml` là XML MLT của **sequence đang mở** đúng như Kdenlive dựng khi xuất (`ProjectManager::projectSceneList(<thư mục project>)`): mọi track, hiệu ứng, title, track phụ đề (filter trỏ tới file `.ass` tạm của app), chưa cần lưu project. `melt` đọc được trực tiếp (`melt scene.mlt in=N out=N …`).
+- `originals: true` và project dùng proxy (`proxies: true`) → đường dẫn proxy được thay bằng file gốc (`KdenliveDoc::useOriginals`, như xuất không chọn "dùng proxy"); `false` giữ proxy (nhanh hơn, ảnh mờ hơn).
+- `root` là thư mục gốc cho đường dẫn tương đối trong XML (thư mục project; project chưa lưu thì là chuỗi app đặt, đường dẫn trong XML khi đó là tuyệt đối hoặc theo `root`).
+- Chỉ đọc, không đổi timeline, không ghi file.
+
+### 8.11 `get_viewer_frame` [P2b]
+
+Tham số (đều không bắt buộc):
+
+| Tên | Kiểu | Mặc định | Ghi chú |
+| --- | --- | --- | --- |
+| `monitor` | `"active"` \| `"project"` \| `"clip"` | `"active"` | Monitor người dùng đang dùng, monitor project (timeline) hay monitor clip |
+| `at_f` | int ≥ 0 | — | Dời playhead của monitor **project** tới frame này trước khi lấy ảnh (người dùng thấy playhead nhảy); ≥ độ dài sequence → `invalid_params` |
+| `width` | int 64…1920 | 512 | Chiều cao theo tỉ lệ khung project, làm tròn chẵn |
+| `quality` | int 1…100 | 80 | Chất lượng JPEG |
+
+```json
+{"monitor": "project", "position_f": 43380, "playing": false, "clip": null,
+ "width": 512, "height": 288, "format": "jpeg", "data": "/9j/4AAQ…"}
+```
+
+- Ảnh là khung monitor đang hiện, như lệnh Extract Frame của Kdenlive (`MonitorProxy::extractFrame`): cùng proxy và hiệu ứng người dùng đang xem. Monitor clip: `clip` = `{"source", "name"}` của clip đang mở, `position_f` là frame trong clip đó; chưa mở clip nào → `not_found`.
+- `at_f` kèm `monitor: "clip"` → `invalid_params`. Dời playhead không đổi `revision`.
+- Ảnh trả trong JSON (`data` base64); app không ghi file.
 
 ## 9. Phiên bản
 
