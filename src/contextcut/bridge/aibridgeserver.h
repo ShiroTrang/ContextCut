@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QStringList>
 #include <deque>
 #include <functional>
 
@@ -33,6 +34,8 @@ class AiBridgeServer : public QObject
     Q_OBJECT
 public:
     using Handler = std::function<JsonRpc::RpcResult(const QJsonObject &params)>;
+    /** @brief Edit methods change the project; they are refused (busy) while a modal dialog is open in the app. */
+    enum class MethodKind { Read, Edit };
 
     /** @brief Starts the single bridge instance (no-op if already started). Returns nullptr if it could not listen;
         the app keeps running without the bridge in that case. */
@@ -40,7 +43,11 @@ public:
     static AiBridgeServer *instance();
     ~AiBridgeServer() override;
 
-    void registerMethod(const QString &name, Handler handler);
+    void registerMethod(const QString &name, Handler handler, MethodKind kind = MethodKind::Read);
+    /** @brief Until clearExclusive(), every method except @p allowed (and auth) fails with busy and @p reason as message.
+        Used while a project is being opened: nothing may touch the project the user is being asked to save. */
+    void setExclusive(const QString &reason, const QStringList &allowed);
+    void clearExclusive();
     quint16 port() const;
     QString bridgeFilePath() const;
     const QString &session() const;
@@ -77,7 +84,14 @@ private:
     QString m_token;
     QString m_session;
     QString m_bridgeFile;
-    QHash<QString, Handler> m_methods;
+    struct Method
+    {
+        Handler handler;
+        MethodKind kind{MethodKind::Read};
+    };
+    QHash<QString, Method> m_methods;
+    QString m_exclusiveReason;
+    QStringList m_exclusiveAllowed;
     QHash<QWebSocket *, Connection> m_connections;
     std::deque<Pending> m_queue;
     bool m_processing{false};

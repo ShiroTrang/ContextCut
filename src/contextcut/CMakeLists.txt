@@ -5,6 +5,8 @@
 # Qt WebSockets is found and linked in src/CMakeLists.txt (block marked "ContextCut:").
 set(kdenlive_SRCS
   ${kdenlive_SRCS}
+  contextcut/app/confirmations.cpp
+  contextcut/app/projectopener.cpp
   contextcut/bridge/aibridgeserver.cpp
   contextcut/bridge/jsonrpc.cpp
   contextcut/bridge/revisiontracker.cpp

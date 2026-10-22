@@ -4,11 +4,14 @@
 */
 
 #include "aibridgeserver.h"
+#include "contextcut/app/confirmations.h"
+#include "contextcut/app/projectopener.h"
 #include "contextcut/model/editorreader.h"
 #include "contextcut/model/scenereader.h"
 #include "contextcut/ops/batchapplier.h"
 #include "revisiontracker.h"
 
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -20,6 +23,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
+#include <QWidget>
 #include <QWebSocket>
 #include <QWebSocketCorsAuthenticator>
 #include <QWebSocketServer>
@@ -83,6 +87,8 @@ AiBridgeServer *AiBridgeServer::start(QObject *parent)
     EditorReader::registerReadOnlyMethods(*server);
     SceneReader::registerMethods(*server);
     BatchApplier::registerMethods(*server);
+    Confirmations::registerMethods(*server);
+    ProjectOpener::registerMethods(*server);
     s_instance = server;
     return server;
 }
@@ -111,9 +117,21 @@ AiBridgeServer::~AiBridgeServer()
     stop();
 }
 
-void AiBridgeServer::registerMethod(const QString &name, Handler handler)
+void AiBridgeServer::registerMethod(const QString &name, Handler handler, MethodKind kind)
 {
-    m_methods.insert(name, std::move(handler));
+    m_methods.insert(name, {std::move(handler), kind});
+}
+
+void AiBridgeServer::setExclusive(const QString &reason, const QStringList &allowed)
+{
+    m_exclusiveReason = reason;
+    m_exclusiveAllowed = allowed;
+}
+
+void AiBridgeServer::clearExclusive()
+{
+    m_exclusiveReason.clear();
+    m_exclusiveAllowed.clear();
 }
 
 quint16 AiBridgeServer::port() const
@@ -304,14 +322,29 @@ void AiBridgeServer::handleFrame(QWebSocket *socket, const QByteArray &frame, bo
         send(socket, request.id, authResult());
         return;
     }
-    const auto handler = m_methods.constFind(request.method);
-    if (handler == m_methods.constEnd()) {
+    const auto method = m_methods.constFind(request.method);
+    if (method == m_methods.constEnd()) {
         send(socket, request.id, JsonRpc::RpcResult::fail(JsonRpc::methodNotFound(request.method)));
         return;
     }
+    if (!m_exclusiveReason.isEmpty() && !m_exclusiveAllowed.contains(request.method)) {
+        send(socket, request.id, JsonRpc::RpcResult::fail(JsonRpc::makeError(JsonRpc::Busy, QStringLiteral("busy"), m_exclusiveReason)));
+        return;
+    }
+    // A modal dialog (Kdenlive asking "Save changes?", Project Settings…) runs a nested event loop that also delivers bridge
+    // frames; an edit landing then would change the project behind the question the user is answering
+    if (method->kind == MethodKind::Edit) {
+        if (const QWidget *dialog = QApplication::activeModalWidget()) {
+            send(socket, request.id,
+                 JsonRpc::RpcResult::fail(JsonRpc::makeError(JsonRpc::Busy, QStringLiteral("busy"),
+                                                             QStringLiteral("a dialog is open in ContextCut (\"%1\"); wait until the user closes it")
+                                                                 .arg(dialog->windowTitle()))));
+            return;
+        }
+    }
     // The client may disconnect while the handler runs (nested event loop)
     QPointer<QWebSocket> guard(socket);
-    const JsonRpc::RpcResult result = (*handler)(request.params);
+    const JsonRpc::RpcResult result = method->handler(request.params);
     if (guard) {
         send(guard, request.id, result);
     }

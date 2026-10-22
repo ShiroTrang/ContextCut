@@ -53,13 +53,24 @@ const QStringList MediaSuffixes{QStringLiteral("mkv"),  QStringLiteral("mp4"), Q
                                 QStringLiteral("m4a"),  QStringLiteral("aac"), QStringLiteral("opus"), QStringLiteral("wma"),  QStringLiteral("png"),
                                 QStringLiteral("jpg"),  QStringLiteral("jpeg"), QStringLiteral("webp"), QStringLiteral("bmp"), QStringLiteral("gif")};
 
-/** Undo commands pushed by the bridge, so undo_batch can tell whether one is still the top of the stack. */
-struct Batch
+/** The undo step of a batch carries its id, so undo_batch recognises it on top of the stack without keeping a pointer
+    that dangles once Kdenlive deletes the command (project closed, undo limit reached) and may be reused by a new one. */
+class BatchCommand : public FunctionalUndoCommand
 {
-    const QUndoCommand *command;
-    QString label;
+public:
+    BatchCommand(const Fun &undo, const Fun &redo, const QString &label, const QString &batchId)
+        : FunctionalUndoCommand(undo, redo, label)
+        , m_batchId(batchId)
+    {
+    }
+    const QString &batchId() const { return m_batchId; }
+
+private:
+    QString m_batchId;
 };
-QHash<QString, Batch> s_batches;
+
+/** Labels of the batches pushed in this run, for undo_batch's messages. */
+QHash<QString, QString> s_batches;
 
 JsonRpc::RpcError conflict(qint64 currentRevision, const QString &message)
 {
@@ -144,10 +155,9 @@ QString shortLabel(const QString &label)
 /** Pushes the batch as one undo step and remembers it for undo_batch. */
 QString pushBatch(const Fun &undo, const Fun &redo, const QString &label)
 {
-    auto *command = new FunctionalUndoCommand(undo, redo, label);
-    pCore->pushUndo(command);
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    s_batches.insert(id, {command, label});
+    pCore->pushUndo(new BatchCommand(undo, redo, label, id));
+    s_batches.insert(id, label);
     return id;
 }
 
@@ -404,15 +414,16 @@ JsonRpc::RpcResult undoBatch(AiBridgeServer *bridge, const QJsonObject &params)
     }
     const auto stack = pCore->undoStack();
     const int index = stack->index();
-    if (index < 1 || stack->command(index - 1) != batch->command) {
-        const QString top = EditorReader::undoLabel(stack->undoText());
+    const auto *top = index < 1 ? nullptr : dynamic_cast<const BatchCommand *>(stack->command(index - 1));
+    if (top == nullptr || top->batchId() != id.toString()) {
+        const QString next = EditorReader::undoLabel(stack->undoText());
         return JsonRpc::RpcResult::fail(conflict(bridge->revisions()->current(),
                                                  QStringLiteral("batch \"%1\" is not the latest undo step (next undo: \"%2\"); undo by hand in the app")
-                                                     .arg(batch->label, top.isEmpty() ? QStringLiteral("none") : top)));
+                                                     .arg(*batch, next.isEmpty() ? QStringLiteral("none") : next)));
     }
     stack->undo();
-    showStatus(QStringLiteral("Đã hoàn tác: %1").arg(batch->label), OperationCompletedMessage, StatusTimeoutMs);
-    return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("revision"), bridge->revisions()->current()}, {QStringLiteral("undone"), batch->label}});
+    showStatus(QStringLiteral("Đã hoàn tác: %1").arg(*batch), OperationCompletedMessage, StatusTimeoutMs);
+    return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("revision"), bridge->revisions()->current()}, {QStringLiteral("undone"), *batch}});
 }
 
 } // namespace
@@ -422,10 +433,11 @@ void registerMethods(AiBridgeServer &server)
     AiBridgeServer *bridge = &server;
     server.registerMethod(QStringLiteral("list_operations"), [](const QJsonObject &) { return JsonRpc::RpcResult::ok(OpRegistry::listOperations()); });
     server.registerMethod(QStringLiteral("validate_operations"), [](const QJsonObject &params) { return validateOperations(params); });
-    server.registerMethod(QStringLiteral("apply_operations"), [bridge](const QJsonObject &params) { return applyOperations(bridge, params); });
-    server.registerMethod(QStringLiteral("add_markers"), [bridge](const QJsonObject &params) { return addMarkers(bridge, params); });
-    server.registerMethod(QStringLiteral("undo_batch"), [bridge](const QJsonObject &params) { return undoBatch(bridge, params); });
-    server.registerMethod(QStringLiteral("import_media"), [bridge](const QJsonObject &params) { return importMedia(bridge, params); });
+    const auto edit = AiBridgeServer::MethodKind::Edit;
+    server.registerMethod(QStringLiteral("apply_operations"), [bridge](const QJsonObject &params) { return applyOperations(bridge, params); }, edit);
+    server.registerMethod(QStringLiteral("add_markers"), [bridge](const QJsonObject &params) { return addMarkers(bridge, params); }, edit);
+    server.registerMethod(QStringLiteral("undo_batch"), [bridge](const QJsonObject &params) { return undoBatch(bridge, params); }, edit);
+    server.registerMethod(QStringLiteral("import_media"), [bridge](const QJsonObject &params) { return importMedia(bridge, params); }, edit);
 }
 
 } // namespace ContextCut::BatchApplier
