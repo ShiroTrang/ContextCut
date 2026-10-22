@@ -1,6 +1,6 @@
 # Bàn giao P2a — Phiên âm và phụ đề
 
-22/10/2026 · kế hoạch: `docs/plans/P2.md` (P2a = Task 1–11) · giao thức: `docs/protocol.md` §8.5, §8.9 · số đo: `docs/measurements/P2a-asr.md` · session P2a (Claude Opus 5.5). **Dừng giữa Task 11 vì hết hạn mức**: code xong, cổng làm một phần.
+22/10/2026 · kế hoạch: `docs/plans/P2.md` (P2a = Task 1–11) · giao thức: `docs/protocol.md` §8.5, §8.9 · số đo: `docs/measurements/P2a-asr.md` · session P2a (Claude Opus 5.5). **Code xong, cổng xong trừ phần cần dữ liệu thật của Nhan** (bản ghi OBS 5 track + mốc gõ tay) và review toàn nhánh.
 
 ## Đã xong (commit trên `main`, chưa push)
 
@@ -17,11 +17,33 @@
 
 Test: `uv run --directory contextcut-ai --no-sync pytest` → 174 xanh trừ `test_live.py::test_read_tools_over_stdio` (môi trường, xem Bẫy); sống trên `p1-gate`: 7/7 phụ đề + 31 op P1 xanh.
 
-## Bằng chứng cổng (một phần)
+## Bằng chứng cổng
 
-- **Claude Code phiên mới** (`claude -p`, `claude-sonnet-4-6`, server chạy `uv run --no-sync`): "Thêm phụ đề cho đoạn 00:10 đến 01:10…" → `get_editor_state` → tự đổi ra frame 250–1750 → `get_transcript` → `add_subtitles` preview → apply **một đợt** "AI: thêm phụ đề 00:10–01:10", 19 dòng, nhắc Ctrl+Z (7 lượt, 0,24 USD). Ảnh app: phụ đề hiện trên track phụ đề (đã chụp trong scratchpad của session).
-- VRAM đỉnh toàn card: 3,4–4,5 GB (< 6 GB) ở mọi model; job thật 34 phút audio `large-v3` 375 s.
-- **Chưa làm:** lưu `.kdenlive` rồi mở lại + dựng khung bằng `melt` (lần lưu đầu bị treo app, xem Bẫy); e2e có cả `transcribe` từ agent; **cổng chính chờ dữ liệu của Nhan**: bản ghi OBS 5 track 10–20 phút + 3–5 phút mốc gõ tay → `make_calibration.py` → Lyric Calibrator → `asr_eval.py --ends` (trung vị lệch đầu/cuối câu < 100 ms, WER 3 model), rồi chốt `asr.PREFERENCE`.
+Project thử: fixture `p1-gate` + đoạn 2 phút cắt (`-c copy`) từ bản ghi một track `C:\Users\VuNhan\Videos\2026-07-10 00-24-05.mkv` (230–350 s), **tắt proxy tự động** (`kdenlive:docproperties.generateproxy` = 0, xem Bẫy). Server MCP cho `claude -p` chạy bằng `uv run --no-sync` (`--mcp-config`).
+
+| Kiểm | Kết quả |
+| --- | --- |
+| Claude Code phiên mới, transcript có sẵn: "Thêm phụ đề cho đoạn 00:10 đến 01:10…" | `get_editor_state` → tự đổi ra frame 250–1750 → `get_transcript` → `add_subtitles` preview → apply **một đợt** "AI: thêm phụ đề 00:10–01:10", 19 dòng, nhắc Ctrl+Z (7 lượt, 0,24 USD). Phụ đề hiện trên track phụ đề trong app (ảnh chụp) |
+| Claude Code phiên mới, từ đầu: "Phiên âm lại … bằng model large-v3, đợi xong rồi thêm phụ đề cho cả đoạn đó" | `list_recordings` → `transcribe(model=large-v3, force)` → `get_job(wait_s=50)` một lần (xong sau 24 s) → `add_subtitles` 37 dòng **một đợt** → nhắc Ctrl+Z (10 lượt, 0,21 USD, 61 s) |
+| Job sống qua client: lượt trước agent (chưa có `wait_s`) hẹn giờ rồi thoát | worker vẫn chạy xong: `parakeet-ctc-vi` CUDA 61,6 s, 182 từ, VRAM đỉnh 4236 MiB |
+| Lưu (Ctrl+S) → `.kdenlive` + `p1-gate.kdenlive.ass` (37 dòng `Dialogue` tiếng Việt) | ✔ |
+| `melt` dựng khung 70 từ file đã lưu | chữ "Là mày phải nhìn lên cái bảng đó," ở đáy khung, dấu đúng (style mặc định của Kdenlive, chữ nhỏ) |
+| Đóng app, mở lại project | `list_subtitles` 37 dòng, `modified: false` |
+| Test | unit 138 xanh; sống 38/38 trên `p1-gate` sạch, 3 lượt liền. Một lần app crash giữa lượt chạy cả bộ (quanh `test_undo_batch_only_top`), không tái hiện được trong 3 lượt sau (có log stderr) |
+| VRAM | đỉnh toàn card 3,4–4,5 GB (< 6 GB) ở mọi model; job thật 34 phút audio `large-v3` 375 s |
+
+**Còn chờ Nhan (cổng chính):** bản ghi OBS 5 track 10–20 phút + 3–5 phút mốc gõ tay. Cách chạy:
+
+```powershell
+# 1. Kiểm 5 stream + tên (Mic/Discord…): ffprobe -v error -show_entries stream=index,codec_type:stream_tags=title -of compact "<file>.mkv"
+# 2. Đoạn để gõ mốc (index 2 = Mic; chọn 3–5 phút nói nhiều)
+uv run --directory contextcut-ai --no-sync python tools/make_calibration.py --recording "<file>.mkv" --index 2 --start <s> --end <s>
+# 3. Nhan sửa lyrics.txt, gõ mốc trong Lyric Calibrator (Đo trễ + "Giữ phím = độ dài chữ"), lưu bản
+# 4. Đo 3 model, có cuối từ
+uv run --directory contextcut-ai --no-sync python tools/asr_eval.py --calibration "D:/SongMV/tools/lyric_calibrator/songs/p2a-mic/versions/<bản>.json" --audio "D:/SongMV/tools/lyric_calibrator/songs/p2a-mic/audio.wav" --ends --out <kết quả>.json
+```
+
+Đạt khi trung vị lệch đầu **và** cuối câu (sau tinh chỉnh) < 100 ms; ghi WER 3 model vào `docs/measurements/P2a-asr.md`, sửa `asr.PREFERENCE` nếu cần. Rồi thử `transcribe` cả hai track Mic + Discord của bản ghi đó qua agent.
 
 ## Lệch thiết kế / kế hoạch
 
@@ -36,15 +58,16 @@ Test: `uv run --directory contextcut-ai --no-sync pytest` → 174 xanh trừ `te
 - `uv sync`/`uv run` (không `--no-sync`) phải cài lại project sau khi `pyproject.toml` đổi; Windows khoá `contextcut-ai.exe` khi có client MCP đang chạy server từ repo → lỗi "failed to remove file". Đóng mọi client rồi `uv sync --directory contextcut-ai --extra analysis --extra parakeet` một lần; tạm thời `--no-install-project --inexact` và chạy test bằng `uv run --no-sync`.
 - NeMo: `restore_from(map_location="cuda")` giữ hai bản trọng số (4,7 GB) → card 6 GB tràn RAM chung, chậm hàng trăm lần. Nạp CPU rồi `.to("cuda")`.
 - PhoWhisper qua CT2 phải `without_timestamps=True` + `int8_float16` (không thì 63 s cho 60 s audio, 5,6 GB VRAM).
-- **Kdenlive tạo proxy cho bản ghi HEVC dài** (`ProxyTask::processLogInfo` nối toàn bộ stderr ffmpeg) làm luồng giao diện quay CPU 100%; trong lúc có hộp thoại modal (lưu lần đầu → hộp "Information") app "Not Responding", cầu nối hết giờ. Gặp khi nhập file 34 phút. Cần xem lại với bản ghi 2 giờ của Nhan (tắt auto-proxy / proxy bằng NVENC) — P2c hoặc P5.
+- **Kdenlive treo khi tạo proxy cho bản ghi HEVC của OBS** (gặp với file 34 phút và cả đoạn 2 phút): luồng giao diện quay CPU 100% mãi trong `ProxyTask::processLogInfo()` (gdb), kể cả khi không còn tiến trình ffmpeg con; cầu nối hết giờ, app "Not Responding". Nguyên nhân nghi: `src/jobs/proxytask.cpp` tạo `QProcess` trong luồng worker nhưng nối `readyReadStandardError` vào `ProxyTask` (sống ở luồng giao diện) → `processLogInfo` chạy ở luồng giao diện, đọc chéo luồng và nối `m_logDetails` liên tục. Tạm tránh: tắt proxy tự động của project (`generateproxy` = 0). **Phải sửa trước khi Nhan dùng bản ghi thật** (task riêng).
 - Đừng `InvokePattern` nút Save bằng UIA khi có thể hiện hộp modal (gọi UIA kẹt trong hộp). Hộp KMessageBox không thấy qua UIA; `PostMessage` Enter không ăn khi app đang bận.
 - Heredoc bash chứa Python có `\1`/`\s` dễ hỏng (thành ký tự điều khiển): ghi script bằng file.
-- `claude -p` cần `--mcp-config` đường dẫn Windows (`cygpath -m`).
+- `claude -p` cần `--mcp-config` đường dẫn Windows (`cygpath -m`). Ở chế độ `-p` agent có thể "hẹn giờ quay lại" rồi thoát khi job chưa xong: `get_job(wait_s≤55)` để chờ trong một lần gọi.
+- Lưu bằng SendKeys Ctrl+S sau `SetForegroundWindow`; hộp "Information" (lưu lần đầu project cũ) đóng bằng SendKeys Enter sau `SetForegroundWindow` vào hộp đó (`gate/save.ps1` trong scratchpad của session). Đóng app đã lưu: `PostMessage WM_CLOSE`.
 
 ## Việc tiếp
 
-1. Nhan: bản ghi OBS 5 track + mốc gõ tay → chạy cổng (lệnh ở `docs/measurements/P2a-asr.md`), chốt model mặc định.
-2. Lưu/mở lại project có phụ đề + `melt` dựng khung (dùng project nhỏ, không file HEVC dài; lưu bằng SendKeys Ctrl+S, hộp "Information" → Enter).
-3. Nhắc Nhan chạy `uv run --directory contextcut-ai python scripts/register_clients.py` (skill đã cài vẫn là bản P1b) và đóng client trước `uv sync`.
+1. Nhan: bản ghi OBS 5 track + mốc gõ tay → chạy cổng (lệnh ở trên), chốt model mặc định.
+2. Sửa treo proxy HEVC của Kdenlive (xem Bẫy) — task riêng, trước khi dùng bản ghi thật dài.
+3. Nhắc Nhan chạy `uv run --directory contextcut-ai python scripts/register_clients.py` (skill đã cài vẫn là bản P1b: agent báo "Skill không load được") và đóng client trước `uv sync`.
 4. Review toàn nhánh P2a (chưa làm) trước khi push; hỏi Nhan trước khi push.
 5. P2b theo `docs/plans/P2.md`.
