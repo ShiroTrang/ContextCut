@@ -47,23 +47,25 @@ def _text(words: list[dict[str, Any]]) -> str:
 
 
 def _split(words: list[dict[str, Any]], fps: float, max_chars: int, min_chars: int) -> list[list[dict[str, Any]]]:
-    """Chia đệ quy ở chỗ tốt nhất: khoảng nghỉ dài nhất, rồi dấu câu / đầu câu ASR / chữ hoa, rồi cân độ dài; ưu tiên
-    cả hai nửa ≥ min_chars."""
+    """Chia đệ quy ở chỗ tốt nhất: khoảng nghỉ dài nhất, rồi hết câu / dấu phẩy / đầu câu ASR / chữ hoa, rồi cân độ
+    dài; nửa ngắn hơn min_chars bị trừ điểm nhẹ (hết câu vẫn thắng)."""
     text = _text(words)
     if len(text) <= max_chars or len(words) < 2:
         return [words]
     total = len(text)
-    candidates = []
+    best_k, best_score = 1, float("-inf")
     for k in range(1, len(words)):
         left, right = len(_text(words[:k])), len(_text(words[k:]))
         gap = max(0.0, (words[k]["start_f"] - words[k - 1]["end_f"]) / fps)
-        score = (gap * 10 + (0.3 if PUNCT_END.search(words[k - 1]["w"]) else 0)
+        prev = words[k - 1]["w"]
+        score = (gap * 10 + (0.6 if SENTENCE_END.search(prev) else 0.3 if PUNCT_END.search(prev) else 0)
                  + (0.4 if words[k].get("_first") else 0)  # câu ASR mới (thường là một cụm ý)
                  + (0.2 if words[k]["w"][:1].isupper() else 0)
-                 - abs(left - right) / total * 0.5)
-        candidates.append((left >= min_chars and right >= min_chars, score, k))
-    pool = [c for c in candidates if c[0]] or candidates
-    k = max(pool, key=lambda c: c[1])[2]
+                 - abs(left - right) / total * 0.5
+                 - 0.4 * max(0, min_chars - min(left, right)) / min_chars)
+        if score > best_score:
+            best_k, best_score = k, score
+    k = best_k
     return _split(words[:k], fps, max_chars, min_chars) + _split(words[k:], fps, max_chars, min_chars)
 
 

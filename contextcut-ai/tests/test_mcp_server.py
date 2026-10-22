@@ -455,3 +455,17 @@ async def test_caption_without_transcript_still_styled(mcp, bridge, tmp_path):
     assert not result.is_error
     [sent] = applied_ops(bridge)["ops"]
     assert sent["color"] == "#FFD400" and (sent["start_f"], sent["end_f"]) == (5, 50)
+
+
+async def test_get_job_wait_returns_when_done(mcp, tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTEXTCUT_DATA_DIR", str(tmp_path / "data"))
+    import time
+    from contextcut_ai import jobs
+    job = jobs.submit("sleep", {"seconds": 1.0})
+    quick = json.loads(text_of(await mcp.call_tool("get_job", {"job_id": job["id"]})))
+    assert quick["status"] in {"queued", "running"}
+    start = time.monotonic()
+    done = json.loads(text_of(await mcp.call_tool("get_job", {"job_id": job["id"], "wait_s": 30})))
+    assert done["status"] == "done" and time.monotonic() - start < 25
+    bad = await mcp.call_tool("get_job", {"job_id": job["id"], "wait_s": 120})
+    assert bad.is_error

@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
+import time
 import shutil
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -343,12 +345,19 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     @read_tool
     async def get_job(
         job_id: Annotated[str | None, Field(description="job_id do transcribe… trả; bỏ trống để xem các job gần đây")] = None,
+        wait_s: Annotated[int, Field(ge=0, le=55, description="chờ tối đa bấy nhiêu giây cho tới khi job xong rồi mới trả")] = 0,
     ) -> str:
         """Theo dõi job nền (phiên âm…): status queued | running | done | failed | cancelled, stage (đang làm gì),
-        progress 0…1, eta_s, result khi xong, error khi lỗi. Job dài vài phút: hỏi lại thưa (30–60 s), đừng gọi dồn."""
+        progress 0…1, eta_s, result khi xong, error khi lỗi. Đợi job: gọi với wait_s=50 (tool tự chờ, trả ngay khi
+        xong) thay vì gọi dồn; job dài thì gọi lại vài lần như vậy."""
         try:
             if job_id:
-                return compact(job_view(jobs.get(job_id)))
+                job = jobs.get(job_id)
+                deadline = time.monotonic() + wait_s
+                while job["status"] in jobs.ACTIVE and time.monotonic() < deadline:
+                    await asyncio.sleep(0.5)
+                    job = jobs.get(job_id)
+                return compact(job_view(job))
             return compact({"jobs": [job_view(j) for j in jobs.recent()]})
         except KeyError as e:
             raise ToolError(f"Không có job {job_id!r} (xem get_job không tham số).") from e

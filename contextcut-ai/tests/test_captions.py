@@ -104,3 +104,11 @@ def test_split_prefers_asr_segment_boundary():
     b = seg("Nhan", [(w, 9.69 + i * 0.2, 9.69 + (i + 1) * 0.2) for i, w in enumerate("Thằng mù nó đang chịu vô đâu vậy?".split())])
     lines = captions.build_lines([a, b], FPS)
     assert [l["text"] for l in lines] == ["4 sợi dây", "Thằng mù nó đang chịu vô đâu vậy?"]
+
+
+def test_split_prefers_sentence_end_over_min_chars():
+    text = "Xong rồi tao chỉ cho mày. Tại tao là cái thằng cầm cuốn sổ để cắt bom."
+    words = [(w, round(5.0 + i * 0.25, 3), round(5.0 + (i + 1) * 0.25, 3)) for i, w in enumerate(text.split())]
+    lines = captions.build_lines([seg("Nhan", words)], FPS)
+    assert lines[0]["text"] == "Xong rồi tao chỉ cho mày."
+    assert " ".join(l["text"] for l in lines) == text and all(len(l["text"]) <= 42 for l in lines)

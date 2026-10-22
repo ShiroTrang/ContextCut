@@ -30,7 +30,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 ## Nghe trước khi dựng
 
 1. `list_recordings`: bản ghi nào, có `track_map` chưa (stream nào là Mic, Discord). Sơ đồ đoán sai (người dùng bảo) thì `set_track_map`.
-2. `transcribe(recording)`: trả `job_id` (hoặc `cached: true` nếu đã có). Buổi quay dài mất vài phút đến vài chục phút: báo người dùng, hỏi `get_job(job_id)` thưa (30–60 s một lần), trong lúc đó làm việc khác được.
+2. `transcribe(recording)`: trả `job_id` (hoặc `cached: true` nếu đã có). Buổi quay dài mất vài phút đến vài chục phút: báo người dùng, rồi chờ bằng `get_job(job_id, wait_s=50)` (tool tự chờ, trả ngay khi xong; chưa xong thì gọi lại). Đừng hẹn giờ quay lại hay kết thúc lượt khi job chưa xong: ở chế độ không tương tác sẽ không có lượt sau.
 3. Tool báo thiếu model hay thư viện kèm **dung lượng**: hỏi người dùng có đồng ý tải không, đồng ý mới gọi lại với `allow_download: true`. Không tự tải.
 4. Xong thì `get_transcript` theo khoảng (`start_f`, `end_f`), `track` khi chỉ cần một người; `words: true` khi cần mốc từng từ (câu đắt). Đọc từng khoảng, đừng kéo cả buổi 2 giờ một lần.
 5. Dàn ý và mốc cắt dựa vào lời thật: không cắt giữa câu, giữa tràng cười (xem `editing-rules`).

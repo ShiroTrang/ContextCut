@@ -44,7 +44,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 ### Nghe trước khi dựng
 
 1. `list_recordings`: bản ghi nào, có `track_map` chưa (stream nào là Mic, Discord). Sơ đồ đoán sai (người dùng bảo) thì `set_track_map`.
-2. `transcribe(recording)`: trả `job_id` (hoặc `cached: true` nếu đã có). Buổi quay dài mất vài phút đến vài chục phút: báo người dùng, hỏi `get_job(job_id)` thưa (30–60 s một lần), trong lúc đó làm việc khác được.
+2. `transcribe(recording)`: trả `job_id` (hoặc `cached: true` nếu đã có). Buổi quay dài mất vài phút đến vài chục phút: báo người dùng, rồi chờ bằng `get_job(job_id, wait_s=50)` (tool tự chờ, trả ngay khi xong; chưa xong thì gọi lại). Đừng hẹn giờ quay lại hay kết thúc lượt khi job chưa xong: ở chế độ không tương tác sẽ không có lượt sau.
 3. Tool báo thiếu model hay thư viện kèm **dung lượng**: hỏi người dùng có đồng ý tải không, đồng ý mới gọi lại với `allow_download: true`. Không tự tải.
 4. Xong thì `get_transcript` theo khoảng (`start_f`, `end_f`), `track` khi chỉ cần một người; `words: true` khi cần mốc từng từ (câu đắt). Đọc từng khoảng, đừng kéo cả buổi 2 giờ một lần.
 5. Dàn ý và mốc cắt dựa vào lời thật: không cắt giữa câu, giữa tràng cười (xem `editing-rules`).
@@ -206,7 +206,7 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 
 ### Lời thoại (transcript)
 
-- `transcribe(recording, tracks?, language="vi", model?, prompt?)` phiên âm theo từng từ các track `transcribe: true` của `track_map` (Mic = Nhan, Discord = "bạn bè"). Chạy nền trong worker riêng: trả `job_id`; `get_job(job_id)` cho `status` (`queued` khi đang chờ GPU vì job khác chạy, `running`, `done`, `failed`, `cancelled`), `stage`, `progress`, `eta_s`. Client đóng giữa chừng thì job vẫn chạy; job hỏng thì gọi lại `transcribe`, phần đã xong được giữ.
+- `transcribe(recording, tracks?, language="vi", model?, prompt?)` phiên âm theo từng từ các track `transcribe: true` của `track_map` (Mic = Nhan, Discord = "bạn bè"). Chạy nền trong worker riêng: trả `job_id`; `get_job(job_id, wait_s=50)` (chờ tới khi xong, tối đa 55 s mỗi lần gọi) cho `status` (`queued` khi đang chờ GPU vì job khác chạy, `running`, `done`, `failed`, `cancelled`), `stage`, `progress`, `eta_s`. Client đóng giữa chừng thì job vẫn chạy; job hỏng thì gọi lại `transcribe`, phần đã xong được giữ.
 - Kết quả lưu ở `<project>.contextcut/analysis/<hash file>/transcript.json` theo **giây trên bản ghi gốc**; gọi lại với cùng model trả `cached: true` ngay. `force: true` để phiên âm lại. `prompt` là tên riêng/thuật ngữ để nghe đúng chính tả ("Minecraft, creeper, Sang").
 - Model: `parakeet-ctc-vi`, `phowhisper-large`, `large-v3` (mặc định chọn theo số đo, cái nào có trên máy). Máy không có GPU NVIDIA vẫn chạy được (CPU, chậm hơn).
 - `get_transcript(recording?, start_f?, end_f?, track?, on, words?, limit, cursor)`: câu `{recording, track, speaker, start_f, end_f, tc, text}`; `tc` là `mm:ss.ff`. Mặc định `on="timeline"`: frame trên timeline đang mở, chỉ lời của đoạn bản ghi đang hiện (đoạn đã cắt không có; câu bị cắt dở có `partial: true`). `on="source"`: frame trên bản ghi gốc (để viết dàn ý theo bản ghi). `low_conf`: từ máy nghe chưa chắc. `words: true`: kèm từng từ `{w, start_f, end_f, p}`.
