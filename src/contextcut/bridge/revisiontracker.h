@@ -31,6 +31,8 @@ public:
     explicit RevisionTracker(QObject *parent = nullptr);
     /** @brief Re-binds to the current document/timeline if they changed, then returns the revision. */
     qint64 current();
+    /** @brief The last revision handed out, without re-binding (safe while a project is being closed or loaded). */
+    qint64 last() const { return m_revision; }
     /** @brief Re-binds to the current document, undo stack and active timeline; bumps when any of them changed. */
     void sync();
 

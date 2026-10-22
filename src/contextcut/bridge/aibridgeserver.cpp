@@ -356,7 +356,9 @@ JsonRpc::RpcResult AiBridgeServer::authResult()
                                               {QStringLiteral("session"), m_session},
                                               {QStringLiteral("app"), QStringLiteral("ContextCut")},
                                               {QStringLiteral("app_version"), QCoreApplication::applicationVersion()},
-                                              {QStringLiteral("revision"), m_revisions->current()}});
+                                              // While a project is being opened (exclusive), re-binding would read the
+                                              // document Kdenlive is tearing down or still building
+                                              {QStringLiteral("revision"), m_exclusiveReason.isEmpty() ? m_revisions->current() : m_revisions->last()}});
 }
 
 void AiBridgeServer::send(QWebSocket *socket, const QJsonValue &id, const JsonRpc::RpcResult &result)
