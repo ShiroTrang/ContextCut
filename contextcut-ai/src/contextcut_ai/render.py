@@ -68,9 +68,10 @@ def run_frames(params: dict[str, Any], report: Callable[..., None]) -> dict[str,
     work.mkdir()
     (work / "frames.mlt").write_text(wrapper_xml(scene, frames, _profile_of(scene)), encoding="utf-8")
     # Đối số của melt chỉ ASCII (cwd = thư mục làm việc): argv của melt trên Windows không giữ được chữ có dấu.
-    # progressive=1 bắt buộc: thiếu nó thì melt crash trên scene Kdenlive khi consumer có width/height (22/10).
-    cmd = [find_tool("melt"), "-quiet", "frames.mlt", "-consumer", "avformat:%04d.jpg", "vcodec=mjpeg", "qscale=3",
-           "an=1", f"width={width}", f"height={height}", "real_time=-1", "progressive=1"]
+    # melt dựng ở cỡ profile như khi xuất, ffmpeg thu nhỏ sau: consumer có width/height thì transition qtblend của
+    # Kdenlive chừa viền đen khi nguồn lớn hơn profile, và thiếu progressive=1 thì melt crash (22/10).
+    cmd = [find_tool("melt"), "-quiet", "frames.mlt", "-consumer", "avformat:%04d.jpg", "vcodec=mjpeg", "qscale=2",
+           "an=1", "real_time=-1", "progressive=1"]
     report(f"melt dựng {len(frames)} khung hình", progress=0.1)
     run = subprocess.run(cmd, cwd=work, env=os.environ | {"MLT_REPOSITORY_DENY": MLT_DENY}, capture_output=True,
                          timeout=TIMEOUT_S, creationflags=NO_WINDOW)
@@ -79,6 +80,11 @@ def run_frames(params: dict[str, Any], report: Callable[..., None]) -> dict[str,
         tail = run.stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
         shutil.rmtree(work, ignore_errors=True)
         raise RuntimeError(f"melt dừng với mã {run.returncode}, ra {len(made)}/{len(frames)} ảnh: {' | '.join(tail)}")
+    report("thu nhỏ ảnh", progress=0.9)
+    subprocess.run([find_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-start_number", "1",
+                    "-i", "%04d.jpg", "-vf", f"scale={width}:{height}", "-q:v", "3", "small-%04d.jpg"], cwd=work,
+                   check=True, capture_output=True, creationflags=NO_WINDOW)
+    made = sorted(work.glob("small-[0-9][0-9][0-9][0-9].jpg"))
     out = []
     for f, image in zip(frames, made):
         target = out_dir / f"{f}-{width}.jpg"

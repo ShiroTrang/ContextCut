@@ -92,3 +92,46 @@ def test_run_frames_reports_melt_failure(tmp_path):
         pytest.skip("cần melt")
     with pytest.raises(RuntimeError, match="melt"):
         run(bad, [0, 5], tmp_path / "out")
+
+
+QTBLEND_SCENE = """<?xml version="1.0" encoding="utf-8"?>
+<mlt LC_NUMERIC="C" producer="main">
+  <profile width="1280" height="720" frame_rate_num="25" frame_rate_den="1" sample_aspect_num="1" sample_aspect_den="1"
+           display_aspect_num="16" display_aspect_den="9" progressive="1" colorspace="709"/>
+  <producer id="black" in="0" out="49"><property name="mlt_service">color</property><property name="resource">black</property>
+    <property name="length">50</property></producer>
+  <producer id="gray" in="0" out="49"><property name="mlt_service">avformat</property><property name="resource">{video}</property>
+  </producer>
+  <playlist id="bg"><entry producer="black" in="0" out="49"/></playlist>
+  <playlist id="v1"><entry producer="gray" in="0" out="49"/></playlist>
+  <tractor id="main" in="0" out="49">
+    <track producer="bg"/>
+    <track producer="v1"/>
+    <transition id="t1"><property name="a_track">0</property><property name="b_track">1</property>
+      <property name="mlt_service">qtblend</property></transition>
+  </tractor>
+</mlt>
+"""
+
+
+def edges(image: Path) -> tuple[int, int, int, int]:
+    """Số cột/hàng gần đen ở mép trái, phải, trên, dưới."""
+    w, h = image_size(image)
+    raw = subprocess.run([paths.find_tool("ffmpeg"), "-v", "error", "-i", str(image), "-f", "rawvideo", "-pix_fmt", "gray",
+                          "-"], capture_output=True, check=True).stdout
+    cols = [sum(raw[y * w + x] for y in range(h)) / h for x in range(w)]
+    rows = [sum(raw[y * w:(y + 1) * w]) / w for y in range(h)]
+    first = lambda seq: next(i for i, v in enumerate(seq) if v > 40)  # noqa: E731
+    return first(cols), first(cols[::-1]), first(rows), first(rows[::-1])
+
+
+def test_run_frames_scaled_keeps_geometry(scene, tmp_path):
+    # Kdenlive ghép mỗi track video lên nền đen bằng transition qtblend. Nguồn lớn hơn profile (OBS 1080p trong project
+    # 720p) + consumer có width/height → melt chừa viền đen 16 px mỗi bên (22/10). Ảnh nhỏ phải đúng như ảnh cỡ gốc.
+    video = tmp_path / "xám 1080.mp4"
+    subprocess.run([paths.find_tool("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=25:d=2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)], check=True)
+    mini = tmp_path / "qtblend.mlt"
+    mini.write_text(QTBLEND_SCENE.format(video=video.as_posix()), encoding="utf-8")
+    small = run(mini, [10], tmp_path / "small", width=512)
+    assert edges(Path(small["frames"][0]["path"])) == (0, 0, 0, 0)
