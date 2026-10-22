@@ -772,7 +772,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         preset: Annotated[Literal["youtube-1080p60", "project"], Field(
             description="youtube-1080p60: project phải là 1920×1080 60 fps; project: giữ cỡ/fps của project")] = "youtube-1080p60",
         encoder: Annotated[Literal["auto", "nvenc", "x264"], Field(
-            description="auto: NVENC (GPU), lỗi thì x264 (CPU, chậm hơn)")] = "auto",
+            description="để auto (NVENC trên GPU, lỗi thì tự chuyển x264); nvenc/x264 chỉ khi người dùng muốn")] = "auto",
         overwrite: Annotated[bool, Field(description="ghi đè file đã có ở output; chỉ khi người dùng đã đồng ý")] = False,
         originals: Annotated[bool, Field(description="dùng file gốc thay proxy (đúng chất lượng); false chỉ để thử nhanh")] = True,
     ) -> str:
@@ -811,10 +811,11 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             await asyncio.sleep(0.5)
             job = jobs.get(job["id"])
         if job["status"] in jobs.ACTIVE and job.get("stage") in waiting:
-            hint = ('Người dùng chưa trả lời: nhắc họ bấm "Xuất" (hoặc "Không xuất") trong hộp của ContextCut, rồi '
-                    "get_job(job_id, wait_s=50).")
+            hint = ('Người dùng chưa trả lời: nói họ bấm "Xuất" (hoặc "Không xuất") trong hộp của ContextCut, rồi gọi '
+                    "ngay get_job(job_id, wait_s=50), lặp tới khi job xong; đừng kết thúc lượt khi job còn chạy.")
         elif job["status"] in jobs.ACTIVE:
-            hint = "Người dùng đã đồng ý, đang xuất: get_job(job_id, wait_s=50) tới khi done rồi báo result.checks."
+            hint = ("Người dùng đã đồng ý, đang xuất: gọi get_job(job_id, wait_s=50) lặp tới khi done rồi báo result.checks; "
+                    "đừng kết thúc lượt khi job còn chạy.")
         elif job["status"] == "cancelled":
             hint = "Không xuất (người dùng từ chối hoặc đã huỷ): không gọi lại trừ khi người dùng bảo."
         else:

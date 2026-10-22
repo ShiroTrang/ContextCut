@@ -112,15 +112,17 @@ def check_output(path: str, *, sources: list[str], project: str | None, overwrit
 
 
 def encoder_props(encoder: str, fps: Fraction, *, force_fail: bool = False) -> dict[str, str]:
-    """Tham số consumer avformat cho một lần mã hoá (`nvenc` | `x264`): H.264 GOP nửa giây, 2 B-frame, AAC 320k."""
+    """Tham số consumer avformat cho một lần mã hoá (`nvenc` | `x264`): H.264 chất lượng cố định có trần 24 Mbit/s
+    (gameplay 1080p60 ~10 GB/giờ; trần 40 Mbit/s ra 38 Mbit/s ~17 GB/giờ, thử 22/10), GOP nửa giây, 2 B-frame, AAC 320k."""
     gop = str(max(1, round(fps / 2)))
+    cap = {"maxrate": "24M", "bufsize": "48M"}
     if encoder == "nvenc":
-        video = {"vcodec": "h264_nvenc", "preset": "p5", "tune": "hq", "rc": "vbr", "cq": "19", "vb": "0",
-                 "maxrate": "40M", "bufsize": "80M", "spatial-aq": "1"}
+        video = {"vcodec": "h264_nvenc", "preset": "p5", "tune": "hq", "rc": "vbr", "cq": "19", "vb": "0", **cap,
+                 "spatial-aq": "1"}
         if force_fail:
             video["gpu"] = "99"  # ép NVENC hỏng thật (encoder không mở được) để thử đường rơi về x264
     elif encoder == "x264":
-        video = {"vcodec": "libx264", "preset": "medium", "crf": "18"}
+        video = {"vcodec": "libx264", "preset": "medium", "crf": "18", **cap}
     else:
         raise ValueError(encoder)
     return {"f": "mp4", **video, "g": gop, "bf": "2", "pix_fmt": "yuv420p", "acodec": "aac", "ab": "320k",

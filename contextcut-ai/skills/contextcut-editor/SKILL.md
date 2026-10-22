@@ -72,7 +72,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 1. Chỉ xuất khi người dùng bảo. Hỏi tên file và chỗ lưu nếu họ chưa nói (đường dẫn tuyệt đối `.mp4`, không trùng file nguồn), cả timeline hay một đoạn.
 2. Preset `youtube-1080p60` khi project là 1920×1080 60 fps (như bản ghi OBS khuyến nghị); project khác cỡ/fps thì `project`, hoặc nhờ người dùng đổi Project Settings. Tool báo rõ khi không khớp.
 3. `export(output, start_f?, end_f?)`: ContextCut hiện hộp "AI muốn xuất video" cho người dùng. **Chỉ người dùng bấm "Xuất"**: agent không bấm thay, không điều khiển giao diện, không xuất bằng đường khác (melt, ffmpeg) để lách. Báo người dùng nhìn sang app.
-4. `get_job(job_id, wait_s=50)` tới khi `done`. Đoạn dài xuất mất vài phút (NVENC nhanh hơn thời gian thực nhiều lần; x264 chậm hơn).
+4. Gọi ngay `get_job(job_id, wait_s=50)`, lặp tới khi `done` (job chờ người dùng bấm rồi mới xuất); đừng kết thúc lượt khi job còn chạy. Xuất mất cỡ thời lượng đoạn đó (1080p60 HEVC: ~1× thời gian thực) hoặc lâu hơn với x264.
 5. Báo: file, thời lượng, dung lượng, bộ mã hoá (`fallback_reason` khi NVENC hỏng phải dùng x264), `ok` và các `checks` hỏng nếu có. `cancelled` là người dùng không đồng ý (hoặc huỷ): không hỏi lại trừ khi họ bảo.
 6. File đã có: chỉ `overwrite: true` khi người dùng đồng ý ghi đè (hộp xác nhận ghi rõ "GHI ĐÈ").
 
