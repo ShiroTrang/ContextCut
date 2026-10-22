@@ -17,12 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from .. import jobs
+from ..jobs import Cancelled  # noqa: F401 — ở jobs để module job (exporter) bắt/ném cùng một lớp khi worker chạy là __main__
 
 Report = Callable[..., None]
-
-
-class Cancelled(Exception):
-    pass
 
 
 def sleep_kind(params: dict[str, Any], report: Report) -> dict[str, Any]:
@@ -40,6 +37,8 @@ KINDS: dict[str, tuple[str, bool]] = {
     "sleep": ("contextcut_ai.analysis.worker:sleep_kind", True),
     "transcribe": ("contextcut_ai.analysis.transcribe:run", True),
     "render_frames": ("contextcut_ai.render:run_frames", False),  # melt giải mã bằng CPU
+    # chờ người dùng xác nhận trước; chỉ lần mã hoá NVENC tự lấy khoá GPU
+    "export": ("contextcut_ai.exporter:run", False),
 }
 
 
@@ -83,8 +82,8 @@ def run(job_id: str) -> int:
             if lock:
                 lock.__exit__(None, None, None)
         jobs.update(job_id, status="done", progress=1, eta_s=0, stage="xong", result=result, finished_at=jobs.now())
-    except Cancelled:
-        jobs.update(job_id, status="cancelled", stage="đã huỷ", finished_at=jobs.now())
+    except Cancelled as e:
+        jobs.update(job_id, status="cancelled", stage=str(e) or "đã huỷ", finished_at=jobs.now())
     except Exception as e:  # noqa: BLE001 — mọi lỗi của job phải thành trạng thái failed, không để worker chết lặng
         traceback.print_exc()
         jobs.update(job_id, status="failed", error=f"{type(e).__name__}: {e}", finished_at=jobs.now())

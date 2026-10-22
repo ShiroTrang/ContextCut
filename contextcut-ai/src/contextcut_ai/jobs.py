@@ -25,6 +25,13 @@ ACTIVE = ("queued", "running")
 FINISHED = ("done", "failed", "cancelled")
 
 
+class Cancelled(Exception):
+    """Job dừng không phải vì lỗi (người dùng huỷ, từ chối xuất…); câu trong exception thành `stage` của job.
+
+    Ở đây chứ không ở `analysis.worker`: worker chạy bằng `python -m` nên lớp khai báo trong nó là `__main__.Cancelled`,
+    khác lớp mà module job import được."""
+
+
 def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
