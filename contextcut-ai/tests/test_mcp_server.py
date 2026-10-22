@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2026 ContextCut contributors
 # SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+import base64
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,9 +12,9 @@ from fake_bridge import EDITOR_STATE, RECORDINGS, rpc_error
 from mcp import Client
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from p2_fixture import make_obs_mkv  # noqa: E402
+from p2_fixture import make_frame_code_video, make_obs_mkv, read_frame_code  # noqa: E402
 
-from contextcut_ai import guide, trackmap
+from contextcut_ai import guide, paths, trackmap
 from contextcut_ai.analysis import asr
 from contextcut_ai.bridge_client import BridgeClient
 from contextcut_ai.mcp_server import build_server
@@ -32,7 +34,7 @@ def text_of(result) -> str:
 
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
-              "validate_operations", "get_job", "get_transcript"}
+              "validate_operations", "get_job", "get_transcript", "get_source_frames", "get_contact_sheet"}
 EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe",
               "add_subtitles"}
 
@@ -469,3 +471,121 @@ async def test_get_job_wait_returns_when_done(mcp, tmp_path, monkeypatch):
     assert done["status"] == "done" and time.monotonic() - start < 25
     bad = await mcp.call_tool("get_job", {"job_id": job["id"], "wait_s": 120})
     assert bad.is_error
+
+
+# --- P2b: xem hình (Task 14) ---------------------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def code60(tmp_path_factory) -> Path:
+    """Video mã số frame 60 fps, 240 frame (p2_fixture.read_frame_code đọc lại số frame từ ảnh)."""
+    return make_frame_code_video(tmp_path_factory.mktemp("code") / "Mã frame 60.mp4", fps=60, seconds=4)
+
+
+def vision_project(bridge, tmp_path, rec_path: Path, fps: int = 60, saved: bool = True) -> Path:
+    state = copy.deepcopy(EDITOR_STATE)
+    companion = tmp_path / "Bắt Nạt Hải Sản.contextcut"
+    if saved:
+        state["project"]["companion_dir"] = companion.as_posix()
+    else:
+        state["project"].update(path=None, companion_dir=None)
+    state["profile"]["fps"] = {"num": fps, "den": 1}
+    bridge.responses["get_editor_state"] = state
+    recs = copy.deepcopy(RECORDINGS)
+    recs["recordings"][0]["path"] = rec_path.as_posix()
+    bridge.responses["list_recordings"] = recs
+    return companion
+
+
+def split_content(result) -> tuple[dict, list]:
+    """Kết quả tool xem hình: một khối chữ JSON rồi các ảnh."""
+    assert not result.is_error, result.content[0].text
+    text, *images = result.content
+    return json.loads(text.text), images
+
+
+def image_frame_code(image, tmp_path: Path) -> int:
+    assert image.type == "image" and image.mime_type == "image/jpeg"
+    path = tmp_path / f"img-{len(list(tmp_path.glob('img-*')))}.jpg"
+    path.write_bytes(base64.b64decode(image.data))
+    return read_frame_code(path)
+
+
+async def test_source_frames_returns_images_and_paths(mcp, bridge, tmp_path, code60):
+    companion = vision_project(bridge, tmp_path, code60)
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [200, 3, 61]}))
+    assert out["on"] == "source" and out["source_fps"] == "60"
+    assert [(f["f"], f["src_f"]) for f in out["frames"]] == [(200, 200), (3, 3), (61, 61)]
+    assert [image_frame_code(img, tmp_path) for img in images] == [200, 3, 61]
+    for f in out["frames"]:
+        path = Path(f["path"])
+        assert path.exists() and companion in path.parents and path.parent.name == "frames"
+    assert out["frames"][1]["tc"] == "00:00.03"
+
+
+async def test_source_frames_project_fps_differs(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60, fps=25)
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [2, 50],
+                                                                           "width": 256}))
+    assert [image_frame_code(img, tmp_path) for img in images] == [5, 120]  # floor(f·60/25 + 0.5), như melt
+
+
+async def test_source_frames_timeline_mapping(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60)  # clip 42: timeline 0…300 = nguồn 120…420
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [10, 100],
+                                                                           "on": "timeline"}))
+    assert [(f["f"], f["src_f"]) for f in out["frames"]] == [(10, 130), (100, 220)]
+    assert [image_frame_code(img, tmp_path) for img in images] == [130, 220]
+
+
+async def test_source_frames_off_timeline_error_per_frame(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60)
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [10, 400, 5000],
+                                                                           "on": "timeline"}))
+    assert len(images) == 1 and image_frame_code(images[0], tmp_path) == 130
+    assert "không có trên timeline" in out["frames"][1]["error"]
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [5000]}))
+    assert images == [] and "5000" in out["frames"][0]["error"]
+
+
+async def test_source_frames_limits(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60)
+    bridge.calls.clear()
+    too_many = await mcp.call_tool("get_source_frames", {"recording": "4", "frames": list(range(13))})
+    assert too_many.is_error and bridge.calls == []
+    too_wide = await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [1], "width": 4000})
+    assert too_wide.is_error
+
+
+async def test_source_frames_rejects_loading_or_audio_only(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60)
+    bridge.responses["list_recordings"]["recordings"][0]["ready"] = False
+    loading = await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [1]})
+    assert loading.is_error and "đang nạp" in loading.content[0].text
+    audio = tmp_path / "chỉ tiếng.wav"
+    subprocess.run([paths.find_tool("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "sine=d=1", str(audio)], check=True)
+    vision_project(bridge, tmp_path, audio)
+    no_video = await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [1]})
+    assert no_video.is_error and "không có hình" in no_video.content[0].text
+
+
+async def test_contact_sheet_tool(mcp, bridge, tmp_path, code60):
+    vision_project(bridge, tmp_path, code60)
+    out, images = split_content(await mcp.call_tool("get_contact_sheet", {"recording": "4", "start_f": 0, "end_f": 240}))
+    assert len(images) == 1 and out["size"] == [1024, 432]
+    assert [(c["cell"], c["row"], c["col"]) for c in out["cells"][:5]] == [(1, 1, 1), (2, 1, 2), (3, 1, 3), (4, 1, 4),
+                                                                           (5, 2, 1)]
+    sheet = tmp_path / "sheet.jpg"
+    sheet.write_bytes(base64.b64decode(images[0].data))
+    assert read_frame_code(sheet, crop=(512, 144, 256, 144)) == out["cells"][6]["src_f"]
+    assert Path(out["path"]).exists()
+    small = await mcp.call_tool("get_contact_sheet", {"recording": "4", "start_f": 0, "end_f": 240, "cols": 2, "rows": 1})
+    assert split_content(small)[0]["size"] == [512, 144]
+
+
+async def test_vision_unsaved_project_uses_data_dir(mcp, bridge, tmp_path, code60, monkeypatch):
+    monkeypatch.setenv("CONTEXTCUT_DATA_DIR", str(tmp_path / "data"))
+    vision_project(bridge, tmp_path, code60, saved=False)
+    out, images = split_content(await mcp.call_tool("get_source_frames", {"recording": "4", "frames": [7]}))
+    assert len(images) == 1
+    assert (tmp_path / "data" / "frames") in Path(out["frames"][0]["path"]).parents
+    assert not (tmp_path / "Bắt Nạt Hải Sản.contextcut").exists()

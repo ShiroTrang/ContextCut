@@ -9,7 +9,9 @@ import importlib.util
 import json
 import time
 import shutil
+import subprocess
 from collections.abc import AsyncIterator, Callable
+from fractions import Fraction
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
@@ -17,10 +19,11 @@ from typing import Annotated, Any, Literal
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.resources import TextResource
+from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, captions, guide, jobs, paths, trackmap, transcript
+from . import __version__, captions, guide, jobs, media, paths, trackmap, transcript, vision
 from .analysis import asr
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
@@ -48,6 +51,15 @@ OpList = Annotated[list[dict[str, Any]], Field(min_length=1, max_length=200,
                                                description='Các op chạy theo thứ tự, vd. [{"type": "split", '
                                                            '"clip_id": 42, "at_f": 300, "reason": "…"}]')]
 
+
+MAX_IMAGES = 12  # ảnh mỗi lần gọi (design: 8–12)
+TILE_W = 256  # ô contact sheet: lưới 4×3 = 1024×432
+
+FrameList = Annotated[list[Annotated[int, Field(ge=0)]], Field(min_length=1, max_length=MAX_IMAGES,
+                                                               description="tối đa 12 frame, vd. [43380, 43440]")]
+ImageWidth = Annotated[int, Field(ge=160, le=1280, description="chiều rộng ảnh (px), cao theo tỉ lệ; 512 ≈ 200 token")]
+FramesOn = Annotated[Literal["source", "timeline"], Field(
+    description="source: frame trên bản ghi gốc (theo fps project); timeline: frame timeline, đổi qua clip của bản ghi")]
 
 JOB_FIELDS = ("id", "kind", "status", "stage", "progress", "eta_s", "created_at", "started_at", "finished_at", "result",
               "error")
@@ -210,6 +222,62 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
                     return rec
             if not (cursor := page.get("next_cursor")):
                 raise ToolError(f"Không có bản ghi id {rec_id!r} trong project (xem list_recordings).")
+
+    video_cache: dict[tuple[str, int, int], tuple[str, media.VideoInfo | None]] = {}
+
+    async def recording_video(recording: str) -> tuple[Path, str, media.VideoInfo]:
+        """File, hash nhanh, thông tin hình của một bản ghi (ffprobe + hash nhớ theo kích thước/giờ sửa file)."""
+        rec = await find_recording(recording)
+        if rec.get("ready") is False:
+            raise ToolError(f"Bản ghi {recording} đang nạp trong app: đợi vài giây rồi gọi lại.")
+        path = Path(rec.get("path") or "")
+        try:
+            st = path.stat()
+            key = (str(path), st.st_size, st.st_mtime_ns)
+            if key not in video_cache:
+                probe, file_hash = await asyncio.to_thread(lambda: (media.probe(path), media.fast_hash(path)))
+                video_cache[key] = (file_hash, probe.video)
+        except (OSError, subprocess.CalledProcessError, paths.ToolMissing) as e:
+            raise ToolError(f"Không đọc được file bản ghi {rec.get('path')}: {e}") from e
+        file_hash, video = video_cache[key]
+        if video is None:
+            raise ToolError(f"Bản ghi {recording} không có hình (chỉ có tiếng): không có khung hình để xem.")
+        return path, file_hash, video
+
+    async def vision_context() -> tuple[Fraction, Path | None]:
+        """fps project (phân số) và thư mục đi kèm project (None khi chưa lưu: ảnh vào %LOCALAPPDATA%)."""
+        state = await bridge_call("get_editor_state")
+        fps = Fraction(state["profile"]["fps"]["num"], state["profile"]["fps"]["den"])
+        try:
+            return fps, paths.companion_dir(state)
+        except paths.ProjectNotSaved:
+            return fps, None
+
+    async def to_source(recording: str, frames: list[int], on: str) -> list[int | str]:
+        """Frame nguồn (fps project) cho từng frame; frame timeline không có bản ghi → câu lỗi thay cho số."""
+        if on == "source":
+            return list(frames)
+        places = transcript.placements((await whole_timeline())["items"], recording)
+        out: list[int | str] = []
+        for f in frames:
+            hit = next((p for p in places if p.start_f <= f < p.start_f + p.src_out_f - p.src_in_f), None)
+            out.append(hit.src_in_f + f - hit.start_f if hit else
+                       f"frame {f} không có trên timeline (bản ghi {recording} không hiện ở đó)")
+        return out
+
+    async def source_images(recording: str, frames: list[int], on: str, width: int):
+        """Ảnh nguồn cho các frame → (fps project, fps nguồn, thư mục đi kèm, [(f, src_f | lỗi, Path | lỗi)])."""
+        fps, comp = await vision_context()
+        path, file_hash, video = await recording_video(recording)
+        sources = await to_source(recording, frames, on)
+        index = {f: vision.source_index(src, fps, video.fps) for f, src in zip(frames, sources) if isinstance(src, int)}
+        out_dir = vision.frames_root(comp) / "analysis" / file_hash / "frames"
+        try:
+            got = await asyncio.to_thread(vision.extract_frames, path, list(index.values()), video.fps, width, out_dir)
+        except (OSError, paths.ToolMissing) as e:
+            raise ToolError(f"Không trích được ảnh: {e}") from e
+        rows = [(f, src, got[index[f]] if isinstance(src, int) else src) for f, src in zip(frames, sources)]
+        return fps, video.fps, comp, rows
 
     @read_tool
     async def get_editor_state() -> str:
@@ -543,6 +611,69 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
                         "lines": len(lines), "range": [lo, hi],
                         "first": [line | {"tc": tc(line["start_f"], fps)} for line in lines[:3]],
                         "warnings": result.get("warnings", [])})
+
+    @read_tool
+    async def get_source_frames(
+        recording: Annotated[str, Field(min_length=1, description="id bản ghi (list_recordings)")],
+        frames: FrameList,
+        on: FramesOn = "source",
+        width: ImageWidth = 512,
+    ) -> list[Any]:
+        """Xem khung hình GỐC của bản ghi ở các frame (≤ 12 ảnh JPEG nhỏ): hiểu chuyện gì xảy ra trong game, chọn chỗ
+        zoom. Không có hiệu ứng/chữ của timeline (cái đó: render_frames). Ảnh cũng lưu thành file, đường dẫn trong phần
+        chữ (client không hiện ảnh thì mở file). Lướt đoạn dài thì dùng get_contact_sheet trước."""
+        fps, source_fps, _, rows = await source_images(recording, frames, on, width)
+        listed, images = [], []
+        for f, src, image in rows:
+            item: dict[str, Any] = {"f": f}
+            if isinstance(src, int):
+                item |= {"src_f": src, "tc": transcript.timecode(f, float(fps))}
+            if isinstance(image, Path):
+                item["path"] = image.as_posix()
+                images.append(Image(path=image))
+            else:
+                item["error"] = str(image)
+            listed.append(item)
+        info = {"recording": recording, "on": on, "fps": {"num": fps.numerator, "den": fps.denominator},
+                "source_fps": str(source_fps), "frames": listed, "images": len(images)}
+        return [compact(info), *images]
+
+    @read_tool
+    async def get_contact_sheet(
+        recording: Annotated[str, Field(min_length=1, description="id bản ghi (list_recordings)")],
+        start_f: Annotated[int, Field(ge=0, description="đầu đoạn")],
+        end_f: Annotated[int, Field(ge=1, description="cuối đoạn (không tính)")],
+        on: FramesOn = "source",
+        cols: Annotated[int, Field(ge=2, le=6, description="số cột")] = 4,
+        rows: Annotated[int, Field(ge=1, le=4, description="số hàng")] = 3,
+    ) -> list[Any]:
+        """Lướt nhanh một đoạn dài của bản ghi gốc: MỘT ảnh lưới (mặc định 4×3 ô, ~600 token), các ô rải đều trong
+        [start_f, end_f), mỗi ô có nhãn thời gian; phần chữ liệt kê ô → frame. Xem kỹ một mốc thì get_source_frames."""
+        if end_f <= start_f:
+            raise ToolError("end_f phải lớn hơn start_f.")
+        frames = vision.even_frames(start_f, end_f, cols * rows)
+        fps, source_fps, comp, found = await source_images(recording, frames, on, TILE_W)
+        cells, tiles = [], []
+        for i, (f, src, image) in enumerate(found):
+            tc = transcript.timecode(f, float(fps))
+            cell: dict[str, Any] = {"cell": i + 1, "row": i // cols + 1, "col": i % cols + 1, "f": f, "tc": tc}
+            if isinstance(src, int):
+                cell["src_f"] = src
+            if not isinstance(image, Path):
+                cell["error"] = str(image)
+            cells.append(cell)
+            tiles.append((image if isinstance(image, Path) else None, tc))
+        sheets = vision.frames_root(comp) / "sheets"
+        out = sheets / f"{recording}-{on}-{start_f}-{end_f}-{cols}x{rows}.jpg"
+        try:
+            await asyncio.to_thread(vision.contact_sheet, tiles, cols, TILE_W, out)
+        except (OSError, subprocess.CalledProcessError, paths.ToolMissing) as e:
+            raise ToolError(f"Không ghép được contact sheet: {e}") from e
+        vision.prune(sheets, keep=30)
+        used_rows = -(-len(tiles) // cols)
+        info = {"recording": recording, "on": on, "range": [start_f, end_f], "source_fps": str(source_fps),
+                "size": [cols * TILE_W, used_rows * (TILE_W * 9 // 16)], "path": out.as_posix(), "cells": cells}
+        return [compact(info), Image(path=out)]
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,
