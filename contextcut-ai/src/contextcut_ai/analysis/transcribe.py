@@ -38,6 +38,9 @@ HALLUCINATIONS = (
     "dang ky kenh",
     "nhan chuong de nhan thong bao",
 )
+MAX_SYLLABLES_PER_S = 15
+MIN_RATE_SYLLABLES = 6
+UNK = re.compile(r"<?\bunk\b>?", re.IGNORECASE)
 
 
 def plain(text: str) -> str:
@@ -52,8 +55,19 @@ def is_hallucination(seg: dict[str, Any]) -> bool:
         return True
     if any(h in text for h in HALLUCINATIONS):
         return True
+    # Câu dài nhét vào chưa tới một giây (PhoWhisper trên tiếng lắt nhắt: 13 âm tiết trong 0,6 s, no_speech_prob ≈ 0):
+    # người nói nhanh cũng chỉ ~8 âm tiết/giây
+    syllables, dur = len(text.split()), seg["end"] - seg["start"]
+    if syllables >= MIN_RATE_SYLLABLES and syllables > MAX_SYLLABLES_PER_S * max(dur, 0.01):
+        return True
     nsp, lp = seg.get("no_speech_prob"), seg.get("avg_logprob")
     return nsp is not None and lp is not None and nsp > 0.6 and lp < -1.0
+
+
+def strip_unk(seg: dict[str, Any]) -> dict[str, Any]:
+    """Bỏ token `unk`/`<unk>` PhoWhisper lọt ra (từ tokenizer, không phải lời nói)."""
+    words = [w for w in seg["words"] if not UNK.fullmatch(w["w"].strip())]
+    return seg | {"text": " ".join(UNK.sub(" ", seg["text"]).split()), "words": words}
 
 
 def read_wav(path: Path) -> np.ndarray:
@@ -152,6 +166,7 @@ def run(params: dict[str, Any], report: Callable[..., None],
                             write_json(chunk_file, {"chunk": [a, b], "segments": [segment_dict(s, a) for s in segs]})
                         segments += json.loads(chunk_file.read_text(encoding="utf-8"))["segments"]
                         done += b - a
+                    segments = [strip_unk(s) for s in segments]
                     kept = [s for s in segments if not is_hallucination(s)]
                     refine_track(kept, refine.envelope(audio, SR))
                     for s in kept:

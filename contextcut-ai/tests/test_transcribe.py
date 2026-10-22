@@ -171,6 +171,27 @@ def test_hallucination_dropped(tmp_path):
     assert [s["text"] for s in load_transcript(tmp_path)["segments"]] == ["Ủa alo"]
 
 
+def test_impossibly_fast_segment_dropped():
+    # PhoWhisper trên tiếng Discord ngắt quãng (Gaming.mkv 17:27): 13 âm tiết trong 0,58 s, no_speech_prob ≈ 0
+    words = "những thông tin tiếp theo sẽ được đăng tải trong phần tiếp theo".split()
+    fake = {"start": 1047.124, "end": 1047.704, "text": " ".join(words) + ".", "avg_logprob": -0.39,
+            "no_speech_prob": 2e-06, "words": [{"w": w, "start": 1047.124, "end": 1047.704, "p": 0.6} for w in words]}
+    fast_talk = {"start": 10.0, "end": 11.0, "text": "ê mày ơi chạy đi nhanh lên", "avg_logprob": -0.3,
+                 "no_speech_prob": 0.0, "words": []}
+    assert transcribe.is_hallucination(fake)
+    assert not transcribe.is_hallucination(fast_talk)  # 7 âm tiết/giây: nói nhanh thật vẫn giữ
+
+
+def test_unk_token_removed():
+    seg = {"start": 0.0, "end": 3.0, "text": "unk mà không vướng <unk> bận", "words": [
+        {"w": "unk", "start": 0.0, "end": 0.2, "p": 0.1}, {"w": "mà", "start": 0.3, "end": 0.5, "p": 0.9},
+        {"w": "không", "start": 0.5, "end": 0.8, "p": 0.9}, {"w": "vướng", "start": 0.8, "end": 1.1, "p": 0.9},
+        {"w": "<unk>", "start": 1.1, "end": 1.2, "p": 0.1}, {"w": "bận", "start": 1.2, "end": 1.5, "p": 0.9}]}
+    out = transcribe.strip_unk(seg)
+    assert out["text"] == "mà không vướng bận"
+    assert [w["w"] for w in out["words"]] == ["mà", "không", "vướng", "bận"]
+
+
 def test_single_mix_track_speaker_null(tmp_path):
     rec = write_wav(tmp_path / "mix.wav", tone_track([(1.0, 2.0)], 4))
     transcribe.run(params(tmp_path, rec, [{"index": 0, "role": "mix", "speaker": None}]), no_report,
