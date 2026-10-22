@@ -17,7 +17,7 @@ from contextcut_ai.errors import BridgeUnavailable, RpcError
 
 pytestmark = [pytest.mark.anyio, pytest.mark.live]
 
-OPS = {"cut_range", "split", "trim", "move", "insert_clip", "add_music", "title_card", "caption", "add_subtitles",
+OPS = {"cut_range", "split", "trim", "move", "insert_clip", "add_music", "title_card", "caption", "add_subtitles", "zoom",
        "clear_subtitles"}
 
 

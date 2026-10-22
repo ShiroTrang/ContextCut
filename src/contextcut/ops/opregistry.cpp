@@ -64,6 +64,15 @@ QList<OpSpec> buildSpecs()
                           1, double(MaxSubtitleItems)};
     ParamSpec subtitleLayer{QStringLiteral("layer"), ParamType::Int, false, QStringLiteral("Subtitle layer (default 0)"), 0, 100};
     subtitleLayer.defaultValue = 0;
+    ParamSpec scale{QStringLiteral("scale"), ParamType::Number, false, QStringLiteral("Zoom factor 1.05..4 (default 1.2)"), 1.05, 4};
+    scale.defaultValue = 1.2;
+    ParamSpec focusX{QStringLiteral("focus_x"), ParamType::Number, false,
+                     QStringLiteral("Point of the frame that stays still while zooming: 0 = left edge .. 1 = right edge (default 0.5)"), 0, 1};
+    focusX.defaultValue = 0.5;
+    ParamSpec focusY{QStringLiteral("focus_y"), ParamType::Number, false, QStringLiteral("Same for height: 0 = top .. 1 = bottom (default 0.5)"), 0, 1};
+    focusY.defaultValue = 0.5;
+    ParamSpec rampOut = frame(QStringLiteral("ramp_out_f"), false, QStringLiteral("Frames to zoom back out before end_f (default 0 = cut back at end_f)"));
+    rampOut.defaultValue = 0;
 
     return {
         {QStringLiteral("cut_range"),
@@ -124,6 +133,19 @@ QList<OpSpec> buildSpecs()
          {frame(QStringLiteral("start_f"), true, QStringLiteral("First timeline frame")),
           frame(QStringLiteral("end_f"), true, QStringLiteral("Timeline frame after the range (> start_f)")),
           {QStringLiteral("layer"), ParamType::Int, false, QStringLiteral("Only this subtitle layer (default: every layer)"), 0, 100}, reason}},
+        {QStringLiteral("zoom"),
+         QStringLiteral("Zoom into the picture over [start_f, end_f): cuts the video clip there and adds a keyframed Transform effect to the piece "
+                        "(zoom in over ramp_in_f, hold, back out over ramp_out_f); created = the zoomed clip"),
+         {frame(QStringLiteral("start_f"), true, QStringLiteral("First timeline frame of the zoom")),
+          frame(QStringLiteral("end_f"), true, QStringLiteral("Timeline frame after the zoom (> start_f); the range must lie inside one clip")),
+          scale, focusX, focusY,
+          frame(QStringLiteral("ramp_in_f"), false, QStringLiteral("Frames to zoom in from start_f (default about 0.2 s; 0 = cut straight in)")), rampOut,
+          choice(QStringLiteral("ease"), {QStringLiteral("out"), QStringLiteral("in"), QStringLiteral("linear"), QStringLiteral("smooth")},
+                 QStringLiteral("Motion of the ramps: out = fast then settling (cubic out), in = slow start, linear, smooth")),
+          track(QStringLiteral("track"), false,
+                QStringLiteral("Video track; default: the top unlocked video track whose clip at start_f comes from a video or image file "
+                               "(titles and colours are skipped)")),
+          reason}},
     };
 }
 

@@ -19,8 +19,10 @@
 #include <QJsonArray>
 #include <QLocale>
 #include <QPoint>
+#include <QSize>
 #include <QVector>
 #include <climits>
+#include <mlt++/MltProperties.h>
 
 namespace ContextCut::TimelineOps {
 
@@ -418,6 +420,83 @@ bool clearSubtitles(const std::shared_ptr<TimelineItemModel> &timeline, const Op
     return true;
 }
 
+/** Transform rectangle (profile pixels) for zoom @p s that keeps the frame point (fx, fy) where it is. */
+mlt_rect zoomRect(double s, double fx, double fy, const QSize &frame)
+{
+    return {double(qRound(fx * frame.width() * (1 - s))), double(qRound(fy * frame.height() * (1 - s))), double(qRound(frame.width() * s)),
+            double(qRound(frame.height() * s)), 1.0};
+}
+
+mlt_keyframe_type easeType(const QString &ease)
+{
+    if (ease == QLatin1String("out")) {
+        return mlt_keyframe_cubic_out;
+    }
+    if (ease == QLatin1String("in")) {
+        return mlt_keyframe_cubic_in;
+    }
+    return ease == QLatin1String("smooth") ? mlt_keyframe_smooth_natural : mlt_keyframe_linear;
+}
+
+bool zoom(const std::shared_ptr<TimelineItemModel> &timeline, const Op &op, Fun &undo, Fun &redo, OpOutcome &outcome)
+{
+    const int start = op.frame(QStringLiteral("start_f"));
+    const int end = op.frame(QStringLiteral("end_f"));
+    int cid = timeline->getClipByPosition(op.track, start);
+    // Cut [start, end) out of the clip like split does (linked audio is cut too), so the effect covers the zoom only
+    if (timeline->getClipPosition(cid) < start) {
+        if (!step(undo, redo, [&](Fun &u, Fun &r) { return TimelineFunctions::requestClipCut(timeline, cid, start, u, r); })) {
+            return fail(outcome, QStringLiteral("start_f"), QStringLiteral("Kdenlive refused to cut clip %1 at %2").arg(cid).arg(start));
+        }
+        cid = timeline->getClipByPosition(op.track, start);
+    }
+    if (timeline->getClipPosition(cid) + timeline->getClipPlaytime(cid) > end &&
+        !step(undo, redo, [&](Fun &u, Fun &r) { return TimelineFunctions::requestClipCut(timeline, cid, end, u, r); })) {
+        return fail(outcome, QStringLiteral("end_f"), QStringLiteral("Kdenlive refused to cut clip %1 at %2").arg(cid).arg(end));
+    }
+    const QSize frame = pCore->getCurrentFrameSize();
+    const double fx = op.number(QStringLiteral("focus_x"));
+    const double fy = op.number(QStringLiteral("focus_y"));
+    const mlt_rect still = zoomRect(1, fx, fy, frame);
+    const mlt_rect zoomed = zoomRect(op.number(QStringLiteral("scale")), fx, fy, frame);
+    const mlt_keyframe_type ease = easeType(op.string(QStringLiteral("ease")));
+    const int rampIn = op.frame(QStringLiteral("ramp_in_f"));
+    const int rampOut = op.frame(QStringLiteral("ramp_out_f"));
+    // Clip effect keyframes are producer frames: the piece's in point is its first frame on the timeline. MLT writes the
+    // animation string, so the easing types get MLT's own keyframe codes.
+    const int in = timeline->getClipIn(cid);
+    const int last = in + (end - start) - 1;
+    Mlt::Properties keys;
+    if (rampIn > 0) {
+        keys.anim_set("rect", still, in, 0, ease);
+        keys.anim_set("rect", zoomed, in + rampIn, 0, mlt_keyframe_linear);
+    } else {
+        keys.anim_set("rect", zoomed, in, 0, mlt_keyframe_linear);
+    }
+    if (rampOut > 0) {
+        keys.anim_set("rect", zoomed, last - rampOut, 0, ease);
+        keys.anim_set("rect", still, last, 0, mlt_keyframe_linear);
+    }
+    // Kdenlive's Transform effect (data/effects/qtblend.xml), added the way pasted effects are (like add_music's Volume)
+    QDomDocument doc;
+    QDomElement effects = doc.createElement(QStringLiteral("effects"));
+    effects.setAttribute(QStringLiteral("parentIn"), in);
+    QDomElement effect = doc.createElement(QStringLiteral("effect"));
+    effect.setAttribute(QStringLiteral("id"), QStringLiteral("qtblend"));
+    QDomElement rect = doc.createElement(QStringLiteral("property"));
+    rect.setAttribute(QStringLiteral("name"), QStringLiteral("rect"));
+    rect.appendChild(doc.createTextNode(QString::fromUtf8(keys.get("rect"))));
+    effect.appendChild(rect);
+    effects.appendChild(effect);
+    doc.appendChild(effects);
+    const auto stack = timeline->getClipEffectStackModel(cid);
+    if (!stack || !step(undo, redo, [&](Fun &u, Fun &r) { return stack->copyXmlEffectWithUndo(effects, u, r); })) {
+        return fail(outcome, QStringLiteral("scale"), QStringLiteral("Kdenlive could not add the Transform effect to clip %1").arg(cid));
+    }
+    outcome.created << cid;
+    return true;
+}
+
 } // namespace
 
 bool step(Fun &undo, Fun &redo, const std::function<bool(Fun &, Fun &)> &request)
@@ -445,7 +524,8 @@ OpFn find(const QString &type)
                                           {QStringLiteral("trim"), trim},            {QStringLiteral("move"), move},
                                           {QStringLiteral("insert_clip"), insertClip}, {QStringLiteral("add_music"), addMusic},
                                           {QStringLiteral("title_card"), titleCard}, {QStringLiteral("caption"), caption},
-                                          {QStringLiteral("add_subtitles"), addSubtitles}, {QStringLiteral("clear_subtitles"), clearSubtitles}};
+                                          {QStringLiteral("add_subtitles"), addSubtitles}, {QStringLiteral("clear_subtitles"), clearSubtitles},
+                                          {QStringLiteral("zoom"), zoom}};
     return ops.value(type, nullptr);
 }
 

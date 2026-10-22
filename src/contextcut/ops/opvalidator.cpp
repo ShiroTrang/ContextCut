@@ -8,6 +8,7 @@
 #include "bin/projectitemmodel.h"
 #include "bin/model/subtitlemodel.hpp"
 #include "core.h"
+#include "effects/effectstack/model/effectstackmodel.hpp"
 #include "lib/audio/audioStreamInfo.h"
 #include "opregistry.h"
 #include "timelineaccess.h"
@@ -528,6 +529,95 @@ bool checkText(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIss
            checkFree(timeline, op, op.track, op.frame(QStringLiteral("start_f")), op.frame(QStringLiteral("end_f")), QStringLiteral("start_f"), error);
 }
 
+/** Clips a zoom picks by default: picture from a file or a sequence, not a title or a colour. */
+bool zoomableClip(const std::shared_ptr<TimelineItemModel> &timeline, int cid)
+{
+    const auto clip = OpValidator::sourceClip(timeline->getClipBinId(cid));
+    if (!clip) {
+        return false;
+    }
+    switch (clip->clipType()) {
+    case ClipType::AV:
+    case ClipType::Video:
+    case ClipType::Image:
+    case ClipType::Playlist:
+    case ClipType::Timeline:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool checkZoom(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIssue &error)
+{
+    const int start = op.frame(QStringLiteral("start_f"));
+    const int end = op.frame(QStringLiteral("end_f"));
+    if (!op.has(QStringLiteral("ramp_in_f"))) {
+        op.params.insert(QStringLiteral("ramp_in_f"), qRound(0.2 * pCore->getCurrentFps()));
+    }
+    const int ramps = op.frame(QStringLiteral("ramp_in_f")) + op.frame(QStringLiteral("ramp_out_f"));
+    if (ramps > end - start) {
+        error = issue(op, QStringLiteral("ramp_out_f"),
+                      QStringLiteral("ramp_in_f + ramp_out_f (%1) must fit in the zoom (end_f - start_f = %2)").arg(ramps).arg(end - start));
+        return false;
+    }
+    int cid = -1;
+    if (op.has(QStringLiteral("track"))) {
+        op.track = OpValidator::resolveTrack(timeline, op.params.value(QLatin1String("track")), error);
+        if (op.track < 0) {
+            error.opIndex = op.index;
+            return false;
+        }
+        if (!checkKind(timeline, op, op.track, false, QStringLiteral("track"), error) ||
+            !checkUnlocked(timeline, op, op.track, QStringLiteral("track"), error)) {
+            return false;
+        }
+        cid = timeline->getClipByPosition(op.track, start);
+        if (cid < 0) {
+            error = issue(op, QStringLiteral("start_f"), QStringLiteral("no clip on %1 at frame %2").arg(trackLabel(timeline, op.track)).arg(start));
+            return false;
+        }
+    } else {
+        for (int tid : displayTracks(timeline)) {
+            const int found = timeline->isAudioTrack(tid) || timeline->trackIsLocked(tid) ? -1 : timeline->getClipByPosition(tid, start);
+            if (found >= 0 && zoomableClip(timeline, found)) {
+                op.track = tid;
+                cid = found;
+                break;
+            }
+        }
+        if (cid < 0) {
+            error = issue(op, QStringLiteral("start_f"),
+                          QStringLiteral("no clip from a video or image file at frame %1 on an unlocked video track; pass track").arg(start));
+            return false;
+        }
+    }
+    const int clipStart = timeline->getClipPosition(cid);
+    const int clipEnd = clipStart + timeline->getClipPlaytime(cid);
+    if (end > clipEnd) {
+        error = issue(op, QStringLiteral("end_f"),
+                      QStringLiteral("the zoom must lie inside one clip: clip %1 on %2 covers [%3, %4); split the zoom at %4")
+                          .arg(cid)
+                          .arg(trackLabel(timeline, op.track))
+                          .arg(clipStart)
+                          .arg(clipEnd));
+        return false;
+    }
+    const auto stack = timeline->getClipEffectStackModel(cid);
+    if (stack && stack->hasFilter(QStringLiteral("qtblend"))) {
+        error = issue(op, QStringLiteral("start_f"),
+                      QStringLiteral("clip %1 already has a Transform effect (an earlier zoom?): undo it or zoom elsewhere").arg(cid));
+        return false;
+    }
+    const auto track = TimelineAccess::track(*timeline, op.track);
+    const auto mixes = track ? track->getMixInfo(cid) : std::pair<MixInfo, MixInfo>();
+    if (mixes.first.firstClipId > -1 || mixes.second.firstClipId > -1) {
+        error = issue(op, QStringLiteral("start_f"), QStringLiteral("clip %1 has a same-track transition (mix); zoom does not support mixes yet").arg(cid));
+        return false;
+    }
+    return true;
+}
+
 /** Type and range of one param; @p value is present and not null. */
 bool checkParamValue(const ParamSpec &spec, const QJsonValue &value, QString &message)
 {
@@ -729,6 +819,9 @@ bool checkState(const std::shared_ptr<TimelineItemModel> &timeline, Op &op, OpIs
     }
     if (op.type == QLatin1String("clear_subtitles")) {
         return checkClearSubtitles(timeline, op, error, warnings);
+    }
+    if (op.type == QLatin1String("zoom")) {
+        return checkZoom(timeline, op, error);
     }
     error = issue(op, QStringLiteral("type"), QStringLiteral("no state check for %1").arg(op.type));
     return false;

@@ -46,7 +46,9 @@ OPS_SUMMARY = (
     "insert_clip{source,in_f,out_f,track,at_f,audio_track?,audio_stream?,audio?} vào chỗ trống; "
     "add_music{source,at_f,in_f?,out_f?,track?,gain_db?}; "
     "title_card{text,start_f,end_f,track?,style=black|dim} thẻ chữ toàn màn hình; "
-    "caption{text,start_f,end_f,speaker?,track?,style=bottom|top|pop}. "
+    "caption{text,start_f,end_f,speaker?,track?,style=bottom|top|pop}; "
+    "zoom{start_f,end_f,scale=1.2,focus_x,focus_y (0…1, điểm đứng yên),ramp_in_f?,ramp_out_f=0,ease=out|in|linear|smooth,"
+    "track?} zoom vào gameplay trong một clip. "
     "Clip có tiếng đi cặp (linked) được cắt/dời cùng. Schema đầy đủ: list_operations."
 )
 

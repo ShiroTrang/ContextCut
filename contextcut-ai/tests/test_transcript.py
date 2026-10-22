@@ -65,3 +65,16 @@ def test_timecode():
     assert transcript.timecode(0, 60) == "00:00.00"
     assert transcript.timecode(3725, 60) == "01:02.05"
     assert transcript.timecode(60 * 3600 + 30, 60) == "1:00:00.30"
+
+
+def test_contiguous_pieces_merge():
+    # zoom cắt clip ở frame 23 (giữa từ "b") và 40: ba mảnh liền nhau cả trên timeline lẫn trong nguồn = một đoạn
+    items = [clip(1, 0, 0, 23, content="video", linked=4), clip(2, 23, 23, 40, content="video", linked=5),
+             clip(3, 40, 40, 60, content="video", linked=6),
+             clip(4, 0, 0, 23, linked=1), clip(5, 23, 23, 40, linked=2), clip(6, 40, 40, 60, linked=3)]
+    places = transcript.placements(items, "4")
+    assert places == [transcript.Placement(0, 0, 60)]
+    segs = transcript.on_timeline(TR, places, FPS, "4")
+    assert [(s["text"], s["partial"]) for s in segs] == [("A, b c.", False), ("Ừ", False)]
+    # nối liền trên timeline nhưng nhảy trong nguồn (đã cắt bỏ một đoạn) thì không gộp
+    assert len(transcript.placements([clip(1, 0, 0, 22), clip(2, 22, 28, 60)], "4")) == 2

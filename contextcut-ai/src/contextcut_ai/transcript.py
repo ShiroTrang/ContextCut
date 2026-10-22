@@ -36,7 +36,16 @@ def placements(items: list[dict[str, Any]], rec_id: str) -> list[Placement]:
         place = Placement(it["start_f"], it["src_in_f"], it["src_out_f"])
         if key not in seen or place.src_out_f > seen[key].src_out_f:
             seen[key] = place
-    return sorted(seen.values(), key=lambda p: (p.start_f, p.src_in_f))
+    # Clip bị cắt mà không bỏ gì (split, zoom cắt ra một mảnh): các mảnh liền nhau cả trên timeline lẫn trong nguồn
+    # là một đoạn, để từ nằm vắt qua chỗ cắt không bị mất
+    merged: list[Placement] = []
+    for place in sorted(seen.values(), key=lambda p: (p.start_f, p.src_in_f)):
+        last = merged[-1] if merged else None
+        if last and last.start_f + last.src_out_f - last.src_in_f == place.start_f and last.src_out_f == place.src_in_f:
+            merged[-1] = Placement(last.start_f, last.src_in_f, place.src_out_f)
+        else:
+            merged.append(place)
+    return merged
 
 
 def _frame(t: float, fps: float) -> int:
