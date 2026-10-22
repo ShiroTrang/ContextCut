@@ -199,7 +199,10 @@ void ProxyTask::run()
 
         m_jobProcess = new QProcess();
         QObject::connect(this, &ProxyTask::jobCanceled, m_jobProcess, &QProcess::kill, Qt::DirectConnection);
-        QObject::connect(m_jobProcess, &QProcess::readyReadStandardError, this, &ProxyTask::processLogInfo);
+        // ContextCut: DirectConnection, so processLogInfo reads m_jobProcess in this worker thread (inside waitForFinished).
+        // Queued to the GUI thread (where this task lives) it raced the worker on QProcess's read buffer: corrupted
+        // reads, then the GUI thread spinning forever in processLogInfo (OBS HEVC proxies). Same as TranscodeTask's ffmpeg job.
+        QObject::connect(m_jobProcess, &QProcess::readyReadStandardError, this, &ProxyTask::processLogInfo, Qt::DirectConnection);
         m_jobProcess->start(KdenliveSettings::meltpath(), mltParameters);
         AbstractTask::setPreferredPriority(m_jobProcess->processId());
         m_jobProcess->waitForFinished(-1);
@@ -412,7 +415,8 @@ void ProxyTask::run()
             qDebug() << "/// FULL PROXY PARAMS:\n" << parameters << "\n------";
         }
         m_jobProcess = new QProcess();
-        QObject::connect(m_jobProcess, &QProcess::readyReadStandardError, this, &ProxyTask::processLogInfo);
+        // ContextCut: DirectConnection, see the MLT branch above
+        QObject::connect(m_jobProcess, &QProcess::readyReadStandardError, this, &ProxyTask::processLogInfo, Qt::DirectConnection);
         QObject::connect(this, &ProxyTask::jobCanceled, m_jobProcess, &QProcess::kill, Qt::DirectConnection);
         m_jobProcess->start(KdenliveSettings::ffmpegpath(), parameters, QIODevice::ReadOnly);
         AbstractTask::setPreferredPriority(m_jobProcess->processId());

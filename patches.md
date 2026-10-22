@@ -27,6 +27,7 @@ Gốc upstream: tag `v26.08.2` (`ef54398259f2af1d29095a798cab48ca4c52f141`).
 | `src/core.cpp` | Đường dẫn kxmlgui khi kiểm crash lần đầu → `kxmlgui5/contextcut/contextcutui.rc` | Như `resetConfig` | P0 |
 | `src/core.cpp` (`initGUI`) | `#include "contextcut/bridge/aibridgeserver.h"` + một dòng `ContextCut::AiBridgeServer::start(m_mainWindow);` ngay sau `m_mainWindow = new MainWindow();` | Khởi động cầu nối AI (WebSocket `127.0.0.1` + token, `docs/protocol.md`). Không có hook nào khác; app vẫn chạy nếu cầu nối không mở được cổng | P1a |
 | `src/CMakeLists.txt` | `add_subdirectory(contextcut)`; sau khối link Qt: `find_package(Qt6 … WebSockets)` + `target_link_libraries(kdenliveLib PUBLIC Qt6::WebSockets)` | Biên dịch `src/contextcut/` vào `kdenliveLib` như các thư mục con khác; cầu nối dùng `QWebSocketServer` | P1a |
+| `src/jobs/proxytask.cpp` (`run`) | Hai `connect(readyReadStandardError → processLogInfo)` (nhánh MLT và ffmpeg) thêm `Qt::DirectConnection` | Sửa lỗi **treo khi tạo proxy** (bản ghi OBS HEVC): `QProcess` tạo và chờ trong luồng worker của `QThreadPool`, còn `ProxyTask` sống ở luồng giao diện → slot chạy ở luồng giao diện, `readAllStandardError()` đua với worker trên bộ đệm đọc của `QProcess` (không thread-safe) → đọc ra nhiều byte hơn tiến trình ghi, rồi luồng giao diện quay mãi trong `processLogInfo` hoặc crash. Giống cách `TranscodeTask` (nhánh ffmpeg) đã làm. Upstream `master` chưa sửa (kiểm 22/10/2026); bỏ patch khi upstream sửa | P2a |
 
 ## Phụ thuộc API nội bộ (không phải patch)
 
@@ -49,3 +50,4 @@ Gốc upstream: tag `v26.08.2` (`ef54398259f2af1d29095a798cab48ca4c52f141`).
 | Nhiều chuỗi giao diện còn chữ "Kdenlive" (hộp thoại, wizard, splash) | Thương hiệu | P5 (giao diện Dễ) |
 | `desktopFileName` vẫn `org.kde.kdenlive`, `organizationDomain` vẫn `kde.org` | Không thấy trên Windows | Khi đóng gói (P5) |
 | Hiệu ứng dựa trên LADSPA biến mất khỏi danh sách | Hệ quả của chặn module `ladspa` | Chấp nhận |
+| Các job khác cùng kiểu với lỗi proxy: `CutTask`, `SpeedTask`, `StabilizeTask`, `FilterTask`, `SceneSplitTask`, `MeltTask`, `MaskTask`, `CustomJobTask`, `TranscodeTask` (nhánh MLT) nối `readyReadStandard*` vào task ở luồng giao diện | Có thể treo/crash như proxy khi tiến trình con ghi nhiều log; ít gặp vì chỉ chạy khi người dùng tự gọi | Khi ContextCut dùng tới job đó: thêm `Qt::DirectConnection` như `proxytask.cpp` |
