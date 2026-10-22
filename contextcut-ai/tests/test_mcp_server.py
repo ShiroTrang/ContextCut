@@ -33,7 +33,8 @@ def text_of(result) -> str:
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
               "validate_operations", "get_job", "get_transcript"}
-EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe",
+              "add_subtitles"}
 
 
 async def test_lists_tools(mcp):
@@ -384,3 +385,73 @@ async def test_get_transcript_tool(mcp, bridge, tmp_path, obs_mkv):
     assert len(page1["segments"]) == 1 and page1["next_cursor"]
     page2 = json.loads(text_of(await mcp.call_tool("get_transcript", {"limit": 1, "cursor": page1["next_cursor"]})))
     assert page2["segments"][0]["text"] == "Nghe nè." and page2["next_cursor"] is None
+
+
+def applied_ops(bridge) -> list[dict]:
+    [(_, params)] = [c for c in bridge.calls if c[0] == "apply_operations"]
+    return params
+
+
+async def test_add_subtitles_preview_and_apply(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    write_transcript(companion, obs_mkv)
+    preview = json.loads(text_of(await mcp.call_tool("add_subtitles", {"preview": True})))
+    # 60 fps: câu 30 frame (0,5 s) kéo tới 0,6 s = 36 frame
+    assert [(l["start_f"], l["end_f"], l["text"], l["speaker"]) for l in preview["lines"]] == [
+        (30, 66, "Ủa alo?", "Nhan"), (120, 156, "Nghe nè.", "bạn bè")]
+    assert preview["lines"][0]["tc"] == "00:00.30"
+    assert not [c for c in bridge.calls if c[0] == "apply_operations"]
+    out = json.loads(text_of(await mcp.call_tool("add_subtitles", {})))
+    assert out["batch_id"] == "b-1" and out["lines"] == 2
+    params = applied_ops(bridge)
+    assert params["base_revision"] == 1873402 and params["label"].startswith("AI: phụ đề")
+    clear, add = params["ops"]
+    assert clear == {"type": "clear_subtitles", "start_f": 0, "end_f": 216000, "reason": "thay phụ đề cũ trong khoảng"}
+    assert add["type"] == "add_subtitles"
+    assert add["items"] == [{"start_f": 30, "end_f": 66, "text": "Ủa alo?", "speaker": "Nhan"},
+                            {"start_f": 120, "end_f": 156, "text": "Nghe nè.", "speaker": "bạn bè"}]
+
+
+async def test_add_subtitles_range_speakers_and_append(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    write_transcript(companion, obs_mkv)
+    await mcp.call_tool("add_subtitles", {"start_f": 100, "end_f": 200, "replace": False, "label": "AI: phụ đề đoạn 2"})
+    params = applied_ops(bridge)
+    assert params["label"] == "AI: phụ đề đoạn 2"
+    [add] = params["ops"]
+    assert [i["text"] for i in add["items"]] == ["Nghe nè."]
+    bridge.calls.clear()
+    await mcp.call_tool("add_subtitles", {"speakers": ["discord"]})
+    assert [i["text"] for i in applied_ops(bridge)["ops"][1]["items"]] == ["Nghe nè."]
+    empty = await mcp.call_tool("add_subtitles", {"start_f": 1000, "end_f": 2000})
+    assert empty.is_error and "Không có lời thoại" in text_of(empty)
+
+
+async def test_caption_enriched_with_speaker_style_and_snapped(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    write_transcript(companion, obs_mkv)
+    op = {"type": "caption", "text": "ủa alo", "speaker": "Nhan", "start_f": 27, "end_f": 63}
+    result = await mcp.call_tool("apply_operations", {"ops": [op], "base_revision": 1873402, "label": "AI: câu đắt"})
+    out = json.loads(text_of(result))
+    [sent] = applied_ops(bridge)["ops"]
+    assert sent == {"type": "caption", "text": "ủa alo", "speaker": "Nhan", "start_f": 30, "end_f": 60,
+                    "color": "#FFFFFF", "uppercase": True, "label": False}
+    assert out["snapped"] == [{"op_index": 0, "start_f": [27, 30], "end_f": [63, 60]}]
+    bridge.calls.clear()
+    keep = {"type": "caption", "text": "x", "speaker": "Sang", "start_f": 27, "end_f": 63, "snap": False, "color": "#00FF00"}
+    await mcp.call_tool("validate_operations", {"ops": [keep]})
+    [(_, params)] = [c for c in bridge.calls if c[0] == "validate_operations"]
+    assert params["ops"] == [{"type": "caption", "text": "x", "speaker": "Sang", "start_f": 27, "end_f": 63,
+                              "color": "#00FF00", "uppercase": True, "label": False}]
+
+
+async def test_caption_without_transcript_still_styled(mcp, bridge, tmp_path):
+    with_companion(bridge, tmp_path / "P.contextcut")
+    op = {"type": "caption", "text": "ừ", "speaker": "bạn bè", "start_f": 5, "end_f": 50}
+    result = await mcp.call_tool("apply_operations", {"ops": [op], "base_revision": 1, "label": "AI: x"})
+    assert not result.is_error
+    [sent] = applied_ops(bridge)["ops"]
+    assert sent["color"] == "#FFD400" and (sent["start_f"], sent["end_f"]) == (5, 50)

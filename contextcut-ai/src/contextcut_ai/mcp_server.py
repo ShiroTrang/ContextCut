@@ -18,7 +18,7 @@ from mcp.server.mcpserver.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, guide, jobs, paths, trackmap, transcript
+from . import __version__, captions, guide, jobs, paths, trackmap, transcript
 from .analysis import asr
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
@@ -146,7 +146,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             segs = []
             for rec_id, tr in loaded:
                 segs += transcript.on_timeline(tr, transcript.placements(tl["items"], rec_id), fps, rec_id)
-            meta = {"revision": tl["revision"], "fps": tl["fps"]}
+            meta = {"revision": tl["revision"], "fps": tl["fps"], "duration_f": tl["sequence"]["duration_f"]}
         else:
             state = await bridge_call("get_editor_state")
             fps = state["profile"]["fps"]["num"] / state["profile"]["fps"]["den"]
@@ -154,6 +154,50 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             meta = {"revision": "source", "fps": state["profile"]["fps"]}
         segs.sort(key=lambda s: (s["start_f"], s["track"]))
         return segs, meta | {"fps_value": fps}, store
+
+    def segment_matcher(store: Any, wanted: int | str) -> Callable[[dict[str, Any]], bool]:
+        """Lọc câu theo index stream (số), role của track_map (mic, discord…) hoặc tên người nói."""
+        def match(seg: dict[str, Any]) -> bool:
+            if isinstance(wanted, int):
+                return seg["track"] == wanted
+            name = str(wanted).strip().lower()
+            info = store.get(seg["recording"]) or {}
+            roles = {t["index"]: t["role"] for t in info.get("track_map", [])}
+            return roles.get(seg["track"]) == name or (seg["speaker"] or "").lower() == name
+        return match
+
+    async def enrich_ops(ops: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Op `caption` có `speaker`: điền màu/in hoa/nhãn theo người nói (speakers.json) và bắt mép về đầu/cuối từ
+        của transcript (`snap`, mặc định bật; trường này không gửi sang app)."""
+        if not any(op.get("type") == "caption" for op in ops):
+            return ops, []
+        try:
+            comp = paths.companion_dir(await bridge_call("get_editor_state"))
+        except paths.ProjectNotSaved:
+            comp = None
+        words, fps = None, 0.0
+        if comp and any(op.get("type") == "caption" and op.get("snap", True) for op in ops):
+            try:
+                segs, meta, _ = await timed_segments(None, "timeline")
+                words = [w | {"speaker": s["speaker"]} for s in segs for w in s["words"]]
+                fps = meta["fps_value"]
+            except ToolError:
+                words = None  # chưa có transcript: không bắt mép
+        out, snapped = [], []
+        for i, op in enumerate(ops):
+            if op.get("type") != "caption":
+                out.append(op)
+                continue
+            op = dict(op)
+            snap = op.pop("snap", True)
+            for key, value in captions.speaker_style(comp, op.get("speaker")).items():
+                op.setdefault(key, value)
+            if snap and words:
+                op, info = captions.snap_caption(op, words, fps)
+                if info:
+                    snapped.append({"op_index": i} | info)
+            out.append(op)
+        return out, snapped
 
     async def find_recording(rec_id: str) -> dict[str, Any]:
         cursor = None
@@ -224,7 +268,9 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     async def validate_operations(ops: OpList) -> str:
         """Kiểm một đợt op với timeline hiện tại, không đổi gì: ok, errors (op_index, field, message), warnings.
         Op đứng sau một op làm đổi timeline chỉ được kiểm gần đúng (apply kiểm lại đúng lúc)."""
-        return await call("validate_operations", {"ops": ops})
+        ops, snapped = await enrich_ops(ops)
+        result = await bridge_call("validate_operations", {"ops": ops})
+        return compact(result | ({"snapped": snapped} if snapped else {}))
 
     @tool(DESTRUCTIVE, OPS_SUMMARY)
     async def apply_operations(
@@ -236,9 +282,15 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     ) -> str:
         """Sửa timeline đang mở: cả đợt là MỘT bước undo nhãn "AI: …" (Ctrl+Z hoàn tác cả đợt). Người dùng sửa chen
         ngang (revision khác base_revision) thì bị từ chối, không đổi gì. Op nào lỗi thì cả đợt tự hoàn tác.
-        Trả batch_id (cho undo_batch), revision mới, created (id clip mới theo op), warnings."""
-        return await call("apply_operations", present(ops=ops, base_revision=base_revision, label=label, reason=reason),
-                          resend=False)
+        Trả batch_id (cho undo_batch), revision mới, created (id clip mới theo op), warnings. Op caption có speaker được
+        tự điền style theo người nói và bắt mép về đầu/cuối từ trong transcript (snapped cho biết đã dời gì)."""
+        ops, snapped = await enrich_ops(ops)
+        try:
+            result = await bridge.call("apply_operations",
+                                       present(ops=ops, base_revision=base_revision, label=label, reason=reason), resend=False)
+        except (BridgeError, RpcError) as e:
+            raise ToolError(agent_message(e)) from e
+        return compact(result | ({"snapped": snapped} if snapped else {}))
 
     @tool(ADDITIVE)
     async def add_markers(
@@ -399,14 +451,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         khoảng (start_f/end_f) để không tràn context; words=true khi cần mốc từng từ."""
         segs, meta, store = await timed_segments(recording, on)
         if track is not None:
-            def match(seg: dict[str, Any]) -> bool:
-                if isinstance(track, int):
-                    return seg["track"] == track
-                wanted = str(track).strip().lower()
-                info = store.get(seg["recording"]) or {}
-                roles = {t["index"]: t["role"] for t in info.get("track_map", [])}
-                return roles.get(seg["track"]) == wanted or (seg["speaker"] or "").lower() == wanted
-            segs = [s for s in segs if match(s)]
+            segs = [s for s in segs if segment_matcher(store, track)(s)]
         if start_f is not None:
             segs = [s for s in segs if s["end_f"] > start_f]
         if end_f is not None:
@@ -435,6 +480,60 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         more = offset + limit < len(segs)
         return compact({"on": on, "revision": meta["revision"], "fps": meta["fps"], "total": len(segs),
                         "segments": out, "next_cursor": f"{meta['revision']}:{offset + limit}" if more else None})
+
+    @tool(DESTRUCTIVE)
+    async def add_subtitles(
+        start_f: Annotated[int | None, Field(ge=0, description="đầu khoảng trên timeline; mặc định 0")] = None,
+        end_f: Annotated[int | None, Field(ge=1, description="cuối khoảng (không tính); mặc định hết timeline")] = None,
+        recording: Annotated[str | None, Field(description="chỉ lời của bản ghi này; mặc định mọi bản ghi có transcript")] = None,
+        speakers: Annotated[list[str] | None, Field(description="chỉ những người nói/track này (tên, role mic|discord)")] = None,
+        replace: Annotated[bool, Field(description="xoá phụ đề cũ bắt đầu trong khoảng trước khi thêm")] = True,
+        preview: Annotated[bool, Field(description="chỉ trả các dòng sẽ thêm, không sửa timeline")] = False,
+        max_chars: Annotated[int, Field(ge=20, le=80, description="ký tự tối đa mỗi dòng (design: 32–42)")] = 42,
+        label: Annotated[str | None, Field(min_length=1, max_length=200, description="nhãn bước undo")] = None,
+    ) -> str:
+        """Phụ đề đầy đủ: lấy lời thoại đã phiên âm trong khoảng (theo timeline đang mở), ngắt dòng ≤ max_chars ở
+        chỗ nghỉ, mỗi dòng hiện từ đầu từ đầu tới cuối từ cuối, rồi đưa vào track phụ đề của Kdenlive trong MỘT bước undo
+        (Ctrl+Z). preview=true để xem trước. Cần transcript (transcribe). Câu đắt chọn lọc thì dùng op caption."""
+        segs, meta, store = await timed_segments(recording, "timeline")
+        fps = meta["fps_value"]
+        lo = start_f or 0
+        hi = end_f if end_f is not None else meta["duration_f"]
+        if hi <= lo:
+            raise ToolError("end_f phải lớn hơn start_f.")
+        if speakers:
+            matchers = [segment_matcher(store, s) for s in speakers]
+            segs = [s for s in segs if any(m(s) for m in matchers)]
+        clipped = []
+        for s in segs:
+            words = [w | {"end_f": min(w["end_f"], hi)} for w in s["words"] if lo <= w["start_f"] < hi]
+            if words:
+                clipped.append(s | {"words": words})
+        lines = captions.build_lines(clipped, fps, max_chars=max_chars, min_chars=min(32, max_chars - 10))
+        for line in lines:
+            line["end_f"] = max(line["start_f"] + 1, min(line["end_f"], hi))
+        tc = transcript.timecode
+        if preview:
+            return compact({"preview": True, "count": len(lines), "range": [lo, hi],
+                            "lines": [line | {"tc": tc(line["start_f"], fps)} for line in lines]})
+        if not lines:
+            raise ToolError(f"Không có lời thoại nào trong khoảng {tc(lo, fps)}–{tc(hi, fps)} (xem get_transcript).")
+        ops: list[dict[str, Any]] = []
+        if replace:
+            ops.append({"type": "clear_subtitles", "start_f": lo, "end_f": hi, "reason": "thay phụ đề cũ trong khoảng"})
+        items = [{k: v for k, v in line.items() if v is not None} for line in lines]
+        for i in range(0, len(items), 5000):
+            ops.append({"type": "add_subtitles", "items": items[i:i + 5000]})
+        label = label or f"AI: phụ đề {tc(lo, fps)}–{tc(hi, fps)}"
+        try:
+            result = await bridge.call("apply_operations", {"base_revision": meta["revision"], "label": label, "ops": ops},
+                                       resend=False)
+        except (BridgeError, RpcError) as e:
+            raise ToolError(agent_message(e)) from e
+        return compact({"batch_id": result["batch_id"], "revision": result["revision"], "label": result.get("label", label),
+                        "lines": len(lines), "range": [lo, hi],
+                        "first": [line | {"tc": tc(line["start_f"], fps)} for line in lines[:3]],
+                        "warnings": result.get("warnings", [])})
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,

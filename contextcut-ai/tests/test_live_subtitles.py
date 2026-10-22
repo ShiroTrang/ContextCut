@@ -7,12 +7,17 @@ Chạy trên project `p1-gate` như test_live_ops.py (sửa rồi hoàn tác; cu
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
-from test_live_ops import apply, app, clean, expect_error, timeline, undo  # noqa: F401 — fixture dùng lại
+from mcp import Client
+from test_live_ops import apply, app, clean, expect_error, free_from, timeline, undo  # noqa: F401 — fixture dùng lại
 
+from contextcut_ai import trackmap
 from contextcut_ai.bridge_client import BridgeClient
+from contextcut_ai.mcp_server import build_server
 
 pytestmark = [pytest.mark.anyio, pytest.mark.live]
 
@@ -103,3 +108,34 @@ async def test_caption_color_uppercase(app, clean):
     err = await expect_error(apply(app, [{"type": "caption", "text": "x", "start_f": at, "end_f": at + 2,
                                           "color": "vàng"}]), "validation_failed")
     assert err.data["errors"][0]["field"] == "color"
+
+
+async def test_add_subtitles_tool_on_app(app, clean):
+    """Chuỗi P2a trên app thật: bản ghi trên timeline + transcript (giả) → tool add_subtitles → track phụ đề."""
+    state = await app.call("get_editor_state")
+    fps = state["profile"]["fps"]["num"] / state["profile"]["fps"]["den"]
+    rec = next(r for r in (await app.call("list_recordings"))["recordings"] if r["name"].startswith("Ông Sang"))
+    at = free_from(await timeline(app))
+    placed = await apply(app, [{"type": "insert_clip", "source": rec["id"], "in_f": 0, "out_f": int(4 * fps),
+                                "track": "V1", "at_f": at}], "AI: test đặt bản ghi")
+    companion = Path(state["project"]["companion_dir"])
+    info = trackmap.RecordingStore(companion).ensure(rec["id"], rec["path"])
+    folder = companion / "analysis" / info["file_hash"]
+    folder.mkdir(parents=True, exist_ok=True)
+    w = lambda t, a, b: {"w": t, "start": a, "end": b, "p": 0.9}  # noqa: E731
+    (folder / "transcript.json").write_text(json.dumps({
+        "schema": "contextcut-transcript/1", "language": "vi", "model": "test",
+        "tracks": [{"index": 2, "model": "test", "language": "vi"}],
+        "segments": [{"track": 2, "speaker": "Nhan", "start": 0.5, "end": 1.4, "text": "Ủa alo?", "flags": [],
+                      "words": [w("Ủa", 0.5, 0.8), w("alo?", 0.8, 1.4)]},
+                     {"track": 2, "speaker": "Nhan", "start": 2.0, "end": 3.0, "text": "Nghe nè.", "flags": [],
+                      "words": [w("Nghe", 2.0, 2.4), w("nè.", 2.4, 3.0)]}]}, ensure_ascii=False), encoding="utf-8")
+    async with Client(build_server(BridgeClient())) as mcp:
+        result = await mcp.call_tool("add_subtitles", {"start_f": at, "end_f": at + int(4 * fps)})
+    assert not result.is_error, result.content[0].text
+    out = json.loads(result.content[0].text)
+    app.batches.append(out["batch_id"])
+    got = [(s["start_f"] - at, s["end_f"] - at, s["text"], s["speaker"]) for s in await subtitles(app)]
+    assert got == [(round(0.5 * fps), round(1.4 * fps), "Ủa alo?", "Nhan"), (round(2.0 * fps), round(3.0 * fps), "Nghe nè.", "Nhan")]
+    await undo(app, {"batch_id": out["batch_id"]})
+    await undo(app, placed)
