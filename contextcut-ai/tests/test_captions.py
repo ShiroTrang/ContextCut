@@ -96,3 +96,11 @@ def test_snap_caption_within_window():
     far = {"type": "caption", "text": "x", "start_f": 10, "end_f": 20}
     same, info = captions.snap_caption(far, words, FPS)
     assert same == far and info is None
+
+
+def test_split_prefers_asr_segment_boundary():
+    # hai câu ASR dính nhau (không nghỉ), gộp lại 43 ký tự: ngắt đúng chỗ câu mới bắt đầu, không ngắt giữa câu sau
+    a = seg("Nhan", [("4", 9.0, 9.2), ("sợi", 9.2, 9.4), ("dây", 9.4, 9.69)])
+    b = seg("Nhan", [(w, 9.69 + i * 0.2, 9.69 + (i + 1) * 0.2) for i, w in enumerate("Thằng mù nó đang chịu vô đâu vậy?".split())])
+    lines = captions.build_lines([a, b], FPS)
+    assert [l["text"] for l in lines] == ["4 sợi dây", "Thằng mù nó đang chịu vô đâu vậy?"]

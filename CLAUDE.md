@@ -62,6 +62,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Thông báo "đang xử lý" trên thanh trạng thái của Kdenlive giữ tối thiểu 4 s trước khi thông báo khác thay.
 - Dựng một khung hình từ `.kdenlive` để tự kiểm: trong bash UCRT64 `MLT_REPOSITORY_DENY=libmltjackrack:libmltladspa melt -quiet x.kdenlive in=N out=N -consumer avformat:f.png vcodec=png an=1`.
 - `codex exec` không duyệt được tool MCP sửa (chính sách `never`): thử sửa bằng Codex thì chạy tương tác.
+- `uv sync` cài lại project khi `pyproject.toml` đổi: đóng mọi AI client đang chạy server `contextcut-ai` trước (Windows khoá `contextcut-ai.exe`); test chạy `uv run --no-sync`.
+- Kdenlive tạo proxy cho bản ghi HEVC dài làm luồng giao diện quay CPU (`ProxyTask::processLogInfo`); có hộp modal lúc đó thì app treo, cầu nối hết giờ (xem `docs/handoff/P2a.md`).
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -72,7 +74,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
 | P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | **Xong** 22/10/2026: P1a cầu nối C++ (`docs/handoff/P1a.md`), P1b MCP server + guide (`docs/handoff/P1b.md`), P1c op sửa timeline, một bước undo mỗi đợt, cổng P1 qua với Claude Code (`docs/handoff/P1c.md`, có tóm tắt P1) |
-| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | Chưa |
+| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | **Đang làm**: P2a phiên âm + phụ đề xong code, cổng chờ bản ghi OBS + mốc tay của Nhan (`docs/handoff/P2a.md`, `docs/plans/P2.md`); P2b vision, P2c xuất chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
 | P5 | Giao diện Dễ, dock Hoạt động AI, zip portable, logo | Chưa |
