@@ -47,7 +47,7 @@ Khi đề xuất một đoạn, đếm số hiệu ứng mỗi phút; vượt h�
 Người dùng xài gói Pro/Plus của Claude, ChatGPT…; xem ảnh tốn hạn mức nhanh nhất.
 
 - Đọc chữ trước, xem hình sau: timeline, transcript, danh sách khoảnh khắc rồi mới xem ảnh ở chỗ đáng chú ý.
-- Lướt đoạn dài bằng một contact sheet; chỉ lấy frame lẻ ở mốc cần xác nhận. Tối đa 8–12 ảnh mỗi lần gọi.
+- Lướt đoạn dài bằng một `get_contact_sheet` (một ảnh ~600 token); chỉ lấy frame lẻ (`get_source_frames`, `render_frames`) ở mốc cần xác nhận. Tối đa 12 ảnh mỗi lần gọi; 512 px là đủ, nhỏ hơn khi chỉ cần bố cục.
 - Đọc timeline theo khoảng và track cần thiết; không kéo 1000 item khi chỉ cần một phút.
 - Không gọi lại tool khi kết quả chưa đổi (so `revision`).
 

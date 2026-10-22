@@ -4,7 +4,7 @@ Tiến trình riêng, nói chuyện với app ContextCut đang mở qua WebSocke
 
 Project uv, Python 3.11, `mcp==2.3.0`. Tài liệu thiết kế: `docs/specs/2026-10-21-contextcut-design.md` §9–10; kế hoạch: `docs/plans/P1.md`.
 
-## Có gì (P1b, P1c, P2a)
+## Có gì (P1b, P1c, P2a, P2b)
 
 | Đường dẫn | Việc |
 | --- | --- |
@@ -12,6 +12,8 @@ Project uv, Python 3.11, `mcp==2.3.0`. Tài liệu thiết kế: `docs/specs/202
 | `src/contextcut_ai/bridge_client.py` | Client WebSocket tới app: đọc `bridge.json`, một kết nối, tự nối lại khi app khởi động lại; lệnh sửa không gửi lại khi kết nối rớt sau lúc gửi |
 | `src/contextcut_ai/errors.py` | Lỗi cầu nối → câu tiếng Việt cho agent ("Mở ContextCut trước (…)") |
 | `src/contextcut_ai/{paths,media,trackmap}.py` | Thư mục dữ liệu, ffprobe/ffmpeg, hash file nhanh, `track_map` theo bản ghi trong `<project>.contextcut/recordings.json` (P2a) |
+| `src/contextcut_ai/vision.py` | Ảnh bản ghi gốc bằng ffmpeg (đúng frame MLT hiện, cả khi fps khác project), contact sheet, cache ảnh (P2b): tool `get_source_frames`, `get_contact_sheet` |
+| `src/contextcut_ai/render.py` | Khung timeline đã dựng bằng melt trên XML scene của app (`get_scene`), mọi frame trong một tiến trình; job `render_frames` (P2b) |
 | `src/contextcut_ai/jobs.py`, `analysis/worker.py` | Job nền: file JSON trong `%LOCALAPPDATA%\contextcut\jobs`, worker tách rời, khoá GPU toàn máy (`gpu.lock`) (P2a) |
 | `src/contextcut_ai/analysis/` | Phiên âm (chỉ trong worker, cần extra): backend ASR (`asr.py`), VAD + chunk (`vad.py`), tinh chỉnh ranh giới (`refine.py`), pipeline `transcribe.py`, đo VRAM (`gpu.py`) |
 | `src/contextcut_ai/{transcript,captions}.py` | Đọc transcript, đổi sang frame timeline/nguồn; ghép dòng phụ đề, style câu đắt theo người nói |
@@ -21,7 +23,7 @@ Project uv, Python 3.11, `mcp==2.3.0`. Tài liệu thiết kế: `docs/specs/202
 | `scripts/register_clients.py` | Đăng ký server cho các client có trên máy; in thay đổi, hỏi y/N từng cái, sao lưu file cũ |
 | `tools/bridge_probe.py` | Client thử cầu nối (P1a) |
 | `tools/p1_fixture.py` | Dựng project thử `p1-gate` cho test sống của op (P1c) và phụ đề (P2a) |
-| `tools/p2_fixture.py` | Bản ghi OBS giả 5 stream audio có tên (P2a) |
+| `tools/p2_fixture.py` | Bản ghi OBS giả 5 stream audio có tên (P2a); video mã số frame + `read_frame_code` để test ảnh đúng mốc (P2b) |
 | `tools/convert_phowhisper.py` | Chuyển PhoWhisper-large trong cache HF sang CTranslate2 (một lần) |
 | `tools/asr_eval.py`, `tools/make_calibration.py` | Đo WER/lệch thời gian so với mốc gõ tay (Lyric Calibrator); chuẩn bị đoạn để gõ mốc (`docs/measurements/P2a-asr.md`) |
 | `tests/` | pytest: cầu nối giả (`fake_bridge.py`) + test sống `-m live` (tự bỏ qua khi app không chạy); `test_live_ops.py` chỉ chạy khi project đang mở tên `p1-gate` vì nó sửa timeline (rồi hoàn tác) |

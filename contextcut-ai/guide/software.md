@@ -1,6 +1,6 @@
 ---
 title: Cách dùng phần mềm
-summary: Frame, khoảng nửa mở, fps, id, track và tag, bản ghi, track_map và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột, phụ đề), lời thoại (transcript, job), phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
+summary: Frame, khoảng nửa mở, fps, id, track và tag, bản ghi, track_map và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột, phụ đề), lời thoại (transcript, job), xem hình (4 tool ảnh, client nào hiện ảnh), zoom, phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
 order: 3
 ---
 # ContextCut qua MCP
@@ -64,6 +64,7 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `caption` | `text`, `start_f`, `end_f`, `speaker?`, `track?`, `style?`, `color?`, `uppercase?`, `label?` | Câu đắt chữ viền đen (`bottom`, `top`) hoặc vàng to (`pop`); `color` `#RRGGBB`, `uppercase` in hoa, `label` thêm "<speaker>: ". Có `speaker` mà bỏ trống ba trường kia thì MCP server điền theo người nói (`speakers.json`) và bắt mép về đầu/cuối từ (`snap: false` để tắt) |
 | `add_subtitles` | `items` (`[{start_f, end_f, text, speaker?}]`, tối đa 5000), `layer?` | Thêm dòng vào track phụ đề (tạo nếu chưa có); các dòng không chồng nhau và không chồng phụ đề có sẵn. Thường dùng tool `add_subtitles` thay vì tự soạn |
 | `clear_subtitles` | `start_f`, `end_f`, `layer?` | Xoá phụ đề bắt đầu trong khoảng; đặt trước `add_subtitles` cùng đợt để thay một đoạn |
+| `zoom` | `start_f`, `end_f`, `scale?` (1.05…4, mặc định 1.2), `focus_x?`, `focus_y?` (0…1, mặc định 0.5), `ramp_in_f?` (≈ 0,2 s), `ramp_out_f?` (0), `ease?` (`out`, `in`, `linear`, `smooth`), `track?` | Zoom vào khung trong `[start_f, end_f)`: cắt clip hình ở hai mốc, thêm hiệu ứng Transform có keyframe vào mảnh giữa (vào trong `ramp_in_f`, giữ, ra trong `ramp_out_f`; 0 = cắt thẳng). Điểm (`focus_x`, `focus_y`) của khung đứng yên: đặt vào chỗ chuyện xảy ra (0,0 = góc trái trên). Track mặc định: track video trên cùng có clip từ file (bỏ qua title). Khoảng phải nằm trong một clip; clip đã có Transform (zoom trước) thì lỗi |
 
 - Track nhận id, tag (`V2`) hoặc tên track. Chữ mặc định lên track tên `Chữ`/`Text`/`Title`, không có thì track video trên cùng (có cảnh báo).
 - Chèn và dời chỉ vào chỗ trống: cần chỗ thì `cut_range`/`move` trước, trong cùng đợt.
@@ -77,6 +78,31 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 - Model: `parakeet-ctc-vi`, `phowhisper-large`, `large-v3` (mặc định chọn theo số đo, cái nào có trên máy). Máy không có GPU NVIDIA vẫn chạy được (CPU, chậm hơn).
 - `get_transcript(recording?, start_f?, end_f?, track?, on, words?, limit, cursor)`: câu `{recording, track, speaker, start_f, end_f, tc, text}`; `tc` là `mm:ss.ff`. Mặc định `on="timeline"`: frame trên timeline đang mở, chỉ lời của đoạn bản ghi đang hiện (đoạn đã cắt không có; câu bị cắt dở có `partial: true`). `on="source"`: frame trên bản ghi gốc (để viết dàn ý theo bản ghi). `low_conf`: từ máy nghe chưa chắc. `words: true`: kèm từng từ `{w, start_f, end_f, p}`.
 - Câu "ảo giác" quen của Whisper trên đoạn im lặng ("Hãy subscribe cho kênh…") đã bị lọc; vẫn có thể sai chữ: không trích nguyên văn một câu `low_conf` làm câu đắt khi chưa hỏi.
+
+## Xem hình
+
+| Tool | Ảnh | Dùng khi |
+| --- | --- | --- |
+| `get_contact_sheet(recording, start_f, end_f, on?, cols?, rows?)` | Một ảnh lưới (mặc định 4×3 ô 256 px, ~600 token), ô rải đều trong khoảng, nhãn `mm:ss.ff` | Lướt đoạn dài để biết chỗ nào đáng xem |
+| `get_source_frames(recording, frames, on?, width?)` | Khung bản ghi gốc ở từng frame (≤ 12, mặc định 512 px ≈ 200 token) | Hiểu chuyện trong game, chọn chỗ zoom |
+| `render_frames(frames, width?, originals?)` | Khung timeline đã dựng, dựng bằng MLT như khi xuất | Tự kiểm sau khi sửa |
+| `get_viewer_frame(monitor?, at_f?, width?)` | Khung monitor đang hiện trong app (proxy, chất lượng preview) | Bàn về "chỗ này" với người dùng; `at_f` dời playhead |
+
+- `on: "source"` (mặc định của hai tool bản ghi): frame trên bản ghi gốc theo fps project; `on: "timeline"`: frame timeline, đổi qua clip của bản ghi (frame không có bản ghi thì báo lỗi riêng frame đó).
+- Bản ghi fps khác project (OBS 60 fps, project 25 fps): ảnh là đúng frame app hiện ở mốc đó.
+- `render_frames` chạy melt trong job nền, thường vài giây; quá 45 s thì trả `job_id`: `get_job(job_id, wait_s=50)` trả ảnh khi xong. Ảnh đã dựng của cùng timeline được dùng lại.
+- Mọi ảnh cũng lưu thành file JPEG (`<project>.contextcut/…`, project chưa lưu thì `%LOCALAPPDATA%\contextcut\frames\…`), đường dẫn nằm trong phần chữ.
+
+Client hiện ảnh từ tool (thử 22/10/2026 với video in số frame: agent phải đọc đúng số trong ảnh):
+
+| Client | Ảnh từ tool MCP | Ghi chú |
+| --- | --- | --- |
+| Claude Code (CLI, `claude -p`, sonnet) | **Có**: đọc đúng | |
+| Codex CLI (`codex exec`, gpt-5.6-terra, gói free) | **Có**: đọc đúng | Tool chỉ đọc chạy được ở `exec`; tool sửa cần chạy tương tác |
+| Claude Desktop | Chưa thử | Chưa đăng ký server trên máy Nhan |
+| Antigravity | Chưa thử | Đã đăng ký server; cần thử qua giao diện |
+
+Client không hiện ảnh thì mở file theo đường dẫn trong phần chữ.
 
 ## Phân trang
 
@@ -113,7 +139,7 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `get_guide` | Đọc hướng dẫn này theo topic | **bây giờ** |
 | `list_sources` | Mọi clip trong bin (nhạc, ảnh, title, bản ghi): id làm `source` | **bây giờ** |
 | `list_operations`, `validate_operations` | Danh mục op + schema; kiểm một đợt không đổi gì | **bây giờ** |
-| `apply_operations` | Sửa timeline, mỗi đợt một bước undo nhãn `AI: …`; op `cut_range`, `split`, `trim`, `move`, `insert_clip`, `add_music`, `title_card`, `caption` | **bây giờ** |
+| `apply_operations` | Sửa timeline, mỗi đợt một bước undo nhãn `AI: …`; op `cut_range`, `split`, `trim`, `move`, `insert_clip`, `add_music`, `title_card`, `caption`, `add_subtitles`, `clear_subtitles`, `zoom` | **bây giờ** |
 | `add_markers`, `undo_batch` | Thêm marker; hoàn tác đợt vừa áp dụng | **bây giờ** |
 | `import_media` | Nhập file media (nhạc, SFX, video, ảnh) vào bin | **bây giờ** |
 | `set_track_map` | Sửa sơ đồ track audio của bản ghi (stream nào là Mic, Discord, game) | **bây giờ** |
@@ -121,8 +147,10 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `transcribe` | Phiên âm theo từ track Mic/Discord của bản ghi (job nền) | **bây giờ** |
 | `get_transcript` | Lời thoại theo câu/từ, người nói, frame timeline hoặc nguồn; phân trang | **bây giờ** |
 | `add_subtitles` | Phụ đề đầy đủ từ transcript vào track phụ đề Kdenlive (một bước undo; `preview` xem trước) | **bây giờ** |
+| `get_contact_sheet`, `get_source_frames` | Xem bản ghi gốc: lưới ảnh một đoạn, khung ở từng frame | **bây giờ** |
+| `render_frames` | Xem timeline đã dựng (như file xuất) để tự kiểm | **bây giờ** |
+| `get_viewer_frame` | Khung người dùng đang xem trong monitor | **bây giờ** |
 | `open_project` | Mở project | P2c |
-| `get_contact_sheet`, `get_source_frames`, `render_frames`, `get_viewer_frame`, `zoom` | Xem hình; zoom phản ứng | P2b |
 | `export` | Xuất file YouTube 1080p60 | P2c |
 | `get_context` | Lời thoại + sự kiện gộp theo thời gian | P3 |
 | `find_moments`, `detect_beats`, `beat_montage`, `get_outline`, `save_outline`, `list_assets` | Khoảnh khắc, beat, dàn ý, thư viện nhạc/SFX/meme | P3 |

@@ -16,7 +16,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 | 3 | Dàn ý | Danh sách đoạn: vai trò (hook, bối cảnh, thân, cao trào, "trong lúc đó", kết), khoảng thời gian trên bản ghi, POV, lý do một câu, kiểu dựng (thường, montage theo beat, cú cắt mỉa…), trạng thái | `get_outline`, `save_outline` | P3; trước đó viết dàn ý trong chat |
 | 4 | Duyệt | Người dùng đọc, sửa, duyệt dàn ý. Đoạn chưa duyệt thì chưa dựng | — | |
 | 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `list_operations`, `validate_operations`, `apply_operations` | **bây giờ** |
-| 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | P2b |
+| 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, zoom đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | **bây giờ** |
 | 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2c |
 
 ## Bản hiện tại làm được gì
@@ -24,8 +24,8 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 - Đọc project đang mở: track, clip, composition, marker (guide), các bản ghi, mọi clip trong bin.
 - Trả lời câu hỏi về project ("timeline có gì", "bản ghi nào chưa dùng", "phút 12 là clip nào") bằng số liệu thật từ tool.
 - **Nghe lời thoại**: phiên âm theo từng từ track Mic (Nhan) và Discord (bạn bè), đọc theo khoảng trên timeline hoặc bản ghi gốc.
-- Đề xuất dàn ý **bằng chữ**, dựa trên transcript, tên file, độ dài, marker và lời người dùng kể. Chưa xem được hình: chuyện chỉ thấy trên màn hình (chết, đánh nhau) thì nói rõ là đoán từ lời thoại.
-- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker. Chưa có: zoom, hiệu ứng, xem hình (P2b trở đi).
+- **Xem hình**: lướt bản ghi bằng contact sheet, xem frame gốc ở mốc cụ thể, xem timeline đã dựng (như file xuất) để tự kiểm, xem khung người dùng đang nhìn. Đề xuất dàn ý dựa trên transcript, hình đã xem, marker và lời người dùng kể; chỗ chưa xem thì nói rõ là đoán.
+- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker, **zoom** vào gameplay. Chưa có: hiệu ứng khác (P6), xuất file (P2c).
 
 ## Nghe trước khi dựng
 
@@ -39,6 +39,16 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 
 - Phụ đề đầy đủ: `add_subtitles(start_f?, end_f?)` sau khi đã dựng xong đoạn; `preview: true` để đọc thử trước. Một bước undo.
 - Câu đắt: op `caption` có `speaker`, mốc từ `get_transcript(words=true)`; style theo người nói tự điền. Xem `get_guide("patterns/subtitles")`.
+
+## Xem hình
+
+Ảnh tốn hạn mức gói AI nhất: đọc chữ (timeline, transcript) trước, xem hình ở chỗ đáng chú ý.
+
+1. Lướt một đoạn dài của bản ghi: `get_contact_sheet(recording, start_f, end_f)`: một ảnh 4×3 ô có nhãn giờ, phần chữ cho biết ô nào là frame nào.
+2. Xem kỹ một mốc: `get_source_frames(recording, frames)` (frame gốc, chưa có hiệu ứng; `on: "timeline"` để đưa frame timeline).
+3. Sau khi sửa: `render_frames(frames)` ở chỗ vừa sửa (đầu, giữa, cuối đoạn): đúng như file xuất (cắt, zoom, chữ, phụ đề). Sai thì sửa tiếp hoặc `undo_batch`, rồi kiểm lại.
+4. Người dùng nói "chỗ này": `get_viewer_frame()` là khung họ đang xem; `at_f` dời playhead tới mốc mình muốn chỉ cho họ thấy.
+5. Client không hiện ảnh: mỗi ảnh có đường dẫn file trong phần chữ, mở file đó (vd. tool đọc file của client).
 
 ## Một lần sửa
 
