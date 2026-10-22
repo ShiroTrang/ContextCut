@@ -51,3 +51,13 @@ def test_large_v3_transcribes_silence_as_nothing(large_v3):
 def test_parakeet_punctuation_joined():
     assert asr.join_punctuation("ngời , Bối rối , tâm trí tôi ?") == "ngời, Bối rối, tâm trí tôi?"
     assert asr.join_punctuation("ngời ,") == "ngời,"
+
+
+def test_default_model_prefers_measured_order(monkeypatch):
+    available = set()
+    monkeypatch.setattr(asr, "model_available", lambda name: name in available)
+    assert asr.default_model() == "large-v3"  # không có gì cũng trả large-v3 (transcribe sẽ báo thiếu model)
+    available.add("phowhisper-large")
+    assert asr.default_model() == "phowhisper-large"
+    available.add("parakeet-ctc-vi")
+    assert asr.default_model() == "parakeet-ctc-vi"

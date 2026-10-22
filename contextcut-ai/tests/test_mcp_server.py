@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from p2_fixture import make_obs_mkv  # noqa: E402
 
 from contextcut_ai import guide, trackmap
+from contextcut_ai.analysis import asr
 from contextcut_ai.bridge_client import BridgeClient
 from contextcut_ai.mcp_server import build_server
 
@@ -307,7 +308,7 @@ async def test_transcribe_submits_voice_tracks(mcp, bridge, tmp_path, obs_mkv, s
     assert [(t["index"], t["speaker"]) for t in params["tracks"]] == [(2, "Nhan"), (3, "bạn bè")]
     assert params["recording"]["id"] == "4" and params["recording"]["path"] == obs_mkv.as_posix()
     assert params["companion"] == companion.as_posix() and params["language"] == "vi"
-    assert params["model"] == "large-v3" and params["prompt"] == "Minecraft, creeper"
+    assert params["model"] == asr.default_model() and params["prompt"] == "Minecraft, creeper"
     one = await mcp.call_tool("transcribe", {"recording": "4", "tracks": [3]})
     assert [t["index"] for t in submitted[-1][1]["tracks"]] == [3], text_of(one)
     bad = await mcp.call_tool("transcribe", {"recording": "4", "tracks": [9]})
@@ -320,9 +321,10 @@ async def test_transcribe_cached(mcp, bridge, tmp_path, obs_mkv, submitted):
     rec = trackmap.RecordingStore(companion).ensure("4", obs_mkv)
     folder = companion / "analysis" / rec["file_hash"]
     folder.mkdir(parents=True)
+    model = asr.default_model()
     (folder / "transcript.json").write_text(json.dumps({
-        "schema": "contextcut-transcript/1", "language": "vi", "model": "large-v3",
-        "tracks": [{"index": 2, "model": "large-v3", "language": "vi"}, {"index": 3, "model": "large-v3", "language": "vi"}],
+        "schema": "contextcut-transcript/1", "language": "vi", "model": model,
+        "tracks": [{"index": 2, "model": model, "language": "vi"}, {"index": 3, "model": model, "language": "vi"}],
         "segments": [{"track": 2, "speaker": "Nhan", "start": 1.0, "end": 2.0, "text": "ủa", "words": []}]}),
         encoding="utf-8")
     out = json.loads(text_of(await mcp.call_tool("transcribe", {"recording": "4"})))

@@ -9,6 +9,7 @@ Model chỉ nạp từ cache khi chưa được phép tải; thiếu thì `Model
 from __future__ import annotations
 
 import gc
+import importlib.util
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -16,7 +17,9 @@ from typing import Any, Protocol
 from ..paths import models_dir
 
 SAMPLE_RATE = 16000
-DEFAULT_MODEL = "large-v3"  # tạm, chốt theo số đo (docs/measurements/P2a-asr.md)
+DEFAULT_MODEL = "large-v3"  # khi không model nào có sẵn (transcribe báo thiếu model kèm dung lượng)
+# Thứ tự ưu tiên theo số đo (docs/measurements/P2a-asr.md): tạm theo bộ bài hát SongMV, chốt lại trên bản ghi của Nhan
+PREFERENCE = ("parakeet-ctc-vi", "phowhisper-large", "large-v3")
 
 
 @dataclass
@@ -204,7 +207,7 @@ class ParakeetBackend:
 
 
 def load(name: str | None = None, device: str = "auto", allow_download: bool = False) -> Backend:
-    name = name or DEFAULT_MODEL
+    name = name or default_model()
     if name not in MODELS:
         raise ValueError(f"model {name!r} không có; chọn một trong: {', '.join(MODELS)}")
     info = MODELS[name]
@@ -214,9 +217,17 @@ def load(name: str | None = None, device: str = "auto", allow_download: bool = F
     return FasterWhisperBackend(name, path, device)
 
 
-def model_path_exists(name: str) -> bool:
+def model_available(name: str) -> bool:
+    """Thư viện của engine đã cài và model có trên máy (không tải gì)."""
+    engine = {"ctranslate2": "faster_whisper", "nemo": "nemo"}[MODELS[name].engine]
+    if importlib.util.find_spec(engine) is None:
+        return False
     try:
         MODELS[name].locate(False)
     except (ModelMissing, ImportError):
         return False
     return True
+
+
+def default_model() -> str:
+    return next((name for name in PREFERENCE if model_available(name)), DEFAULT_MODEL)

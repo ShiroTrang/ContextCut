@@ -342,7 +342,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             chosen = [t for t in track_map if t["transcribe"]]
         if not chosen:
             raise ToolError("Không có track nào được đánh dấu phiên âm: dùng set_track_map hoặc truyền tracks.")
-        model = model or asr.DEFAULT_MODEL
+        model = model or asr.default_model()
         if model not in asr.MODELS:
             raise ToolError(f"Model {model!r} không có; chọn một trong: {', '.join(asr.MODELS)}.")
         base = comp / "analysis" / info["file_hash"]

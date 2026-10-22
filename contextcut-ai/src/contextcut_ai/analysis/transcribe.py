@@ -102,7 +102,7 @@ def refine_track(segments: list[dict[str, Any]], env: np.ndarray) -> None:
 def run(params: dict[str, Any], report: Callable[..., None],
         load_backend: Callable[..., asr.Backend] = asr.load) -> dict[str, Any]:
     rec = params["recording"]
-    model = params.get("model") or asr.DEFAULT_MODEL
+    model = params.get("model") or asr.default_model()
     lang = params.get("language") or "vi"
     base = Path(params["companion"]) / "analysis" / rec["file_hash"]
     tracks = params["tracks"]
