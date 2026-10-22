@@ -9,6 +9,7 @@ set(kdenlive_SRCS
   contextcut/bridge/jsonrpc.cpp
   contextcut/bridge/revisiontracker.cpp
   contextcut/model/editorreader.cpp
+  contextcut/model/scenereader.cpp
   contextcut/ops/batchapplier.cpp
   contextcut/ops/opregistry.cpp
   contextcut/ops/opvalidator.cpp
