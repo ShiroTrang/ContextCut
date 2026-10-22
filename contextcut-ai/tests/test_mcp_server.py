@@ -31,8 +31,8 @@ def text_of(result) -> str:
 
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
-              "validate_operations", "get_job"}
-EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job"}
+              "validate_operations", "get_job", "get_transcript"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe"}
 
 
 async def test_lists_tools(mcp):
@@ -272,3 +272,113 @@ async def test_get_job_and_cancel_job_tools(mcp, tmp_path, monkeypatch):
     assert out["status"] in {"queued", "running", "cancelled"}
     missing = await mcp.call_tool("get_job", {"job_id": "khong-co"})
     assert missing.is_error and "khong-co" in text_of(missing)
+
+
+@pytest.fixture
+def submitted(monkeypatch):
+    """jobs.submit giả: ghi lại tham số thay vì chạy worker ASR thật."""
+    from contextcut_ai import jobs
+    calls = []
+
+    def fake_submit(kind, params):
+        calls.append((kind, params))
+        return {"id": "transcribe-1", "kind": kind, "status": "queued", "stage": "đang khởi động worker"}
+
+    monkeypatch.setattr(jobs, "submit", fake_submit)
+    monkeypatch.setattr(jobs, "recent", lambda limit=10: [])
+    return calls
+
+
+async def test_transcribe_unsaved_project(mcp, bridge, submitted):
+    state = copy.deepcopy(EDITOR_STATE)
+    state["project"].update(path=None, companion_dir=None)
+    bridge.responses["get_editor_state"] = state
+    result = await mcp.call_tool("transcribe", {"recording": "4"})
+    assert result.is_error and "Lưu project trước" in text_of(result) and submitted == []
+
+
+async def test_transcribe_submits_voice_tracks(mcp, bridge, tmp_path, obs_mkv, submitted):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    out = json.loads(text_of(await mcp.call_tool("transcribe", {"recording": "4", "prompt": "Minecraft, creeper"})))
+    assert out["job_id"] == "transcribe-1" and out["status"] == "queued"
+    [(kind, params)] = submitted
+    assert kind == "transcribe"
+    assert [(t["index"], t["speaker"]) for t in params["tracks"]] == [(2, "Nhan"), (3, "bạn bè")]
+    assert params["recording"]["id"] == "4" and params["recording"]["path"] == obs_mkv.as_posix()
+    assert params["companion"] == companion.as_posix() and params["language"] == "vi"
+    assert params["model"] == "large-v3" and params["prompt"] == "Minecraft, creeper"
+    one = await mcp.call_tool("transcribe", {"recording": "4", "tracks": [3]})
+    assert [t["index"] for t in submitted[-1][1]["tracks"]] == [3], text_of(one)
+    bad = await mcp.call_tool("transcribe", {"recording": "4", "tracks": [9]})
+    assert bad.is_error and "9" in text_of(bad)
+
+
+async def test_transcribe_cached(mcp, bridge, tmp_path, obs_mkv, submitted):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    rec = trackmap.RecordingStore(companion).ensure("4", obs_mkv)
+    folder = companion / "analysis" / rec["file_hash"]
+    folder.mkdir(parents=True)
+    (folder / "transcript.json").write_text(json.dumps({
+        "schema": "contextcut-transcript/1", "language": "vi", "model": "large-v3",
+        "tracks": [{"index": 2, "model": "large-v3", "language": "vi"}, {"index": 3, "model": "large-v3", "language": "vi"}],
+        "segments": [{"track": 2, "speaker": "Nhan", "start": 1.0, "end": 2.0, "text": "ủa", "words": []}]}),
+        encoding="utf-8")
+    out = json.loads(text_of(await mcp.call_tool("transcribe", {"recording": "4"})))
+    assert out["cached"] is True and out["segments"] == 1 and submitted == []
+    await mcp.call_tool("transcribe", {"recording": "4", "force": True})
+    assert len(submitted) == 1
+
+
+async def test_transcribe_missing_model_asks_first(mcp, bridge, tmp_path, obs_mkv, submitted, monkeypatch):
+    pytest.importorskip("huggingface_hub")
+    monkeypatch.setenv("CONTEXTCUT_MODELS", str(tmp_path / "trống"))
+    with_companion(bridge, tmp_path / "P.contextcut", obs_mkv)
+    result = await mcp.call_tool("transcribe", {"recording": "4", "model": "phowhisper-large"})
+    assert result.is_error and "3,1 GB" in text_of(result) and "hỏi" in text_of(result).lower()
+    assert submitted == []
+
+
+def write_transcript(companion: Path, obs_mkv: Path) -> None:
+    rec = trackmap.RecordingStore(companion).ensure("4", obs_mkv)
+    folder = companion / "analysis" / rec["file_hash"]
+    folder.mkdir(parents=True, exist_ok=True)
+    w = lambda t, a, b, p=0.9: {"w": t, "start": a, "end": b, "p": p}  # noqa: E731
+    (folder / "transcript.json").write_text(json.dumps({
+        "schema": "contextcut-transcript/1", "language": "vi", "model": "large-v3",
+        "tracks": [{"index": 2, "model": "large-v3", "language": "vi"}, {"index": 3, "model": "large-v3", "language": "vi"}],
+        "segments": [
+            {"track": 2, "speaker": "Nhan", "start": 2.5, "end": 3.0, "text": "Ủa alo?", "flags": [],
+             "words": [w("Ủa", 2.5, 2.7), w("alo?", 2.7, 3.0, 0.3)]},
+            {"track": 3, "speaker": "bạn bè", "start": 4.0, "end": 4.5, "text": "Nghe nè.", "flags": [],
+             "words": [w("Nghe", 4.0, 4.2), w("nè.", 4.2, 4.5)]},
+            {"track": 2, "speaker": "Nhan", "start": 8.0, "end": 8.5, "text": "Ngoài clip", "flags": [],
+             "words": [w("Ngoài", 8.0, 8.2), w("clip", 8.2, 8.5)]}]}, ensure_ascii=False), encoding="utf-8")
+
+
+async def test_get_transcript_tool(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    missing = await mcp.call_tool("get_transcript", {})
+    assert missing.is_error and "transcribe" in text_of(missing)
+    write_transcript(companion, obs_mkv)
+    out = json.loads(text_of(await mcp.call_tool("get_transcript", {})))
+    # clip 42/43: timeline 0–300 ← nguồn 120–420 (60 fps); 2,5 s = frame nguồn 150 → timeline 30
+    assert [(s["speaker"], s["start_f"], s["end_f"], s["text"]) for s in out["segments"]] == [
+        ("Nhan", 30, 60, "Ủa alo?"), ("bạn bè", 120, 150, "Nghe nè.")]
+    assert out["segments"][0]["tc"] == "00:00.30" and out["segments"][0]["low_conf"] == ["alo?"]
+    assert "words" not in out["segments"][0] and out["next_cursor"] is None and out["on"] == "timeline"
+    src = json.loads(text_of(await mcp.call_tool("get_transcript", {"on": "source", "words": True})))
+    assert [s["start_f"] for s in src["segments"]] == [150, 240, 480]
+    assert src["segments"][0]["words"][1] == {"w": "alo?", "start_f": 162, "end_f": 180, "p": 0.3}
+    disc = json.loads(text_of(await mcp.call_tool("get_transcript", {"track": "discord"})))
+    assert [s["text"] for s in disc["segments"]] == ["Nghe nè."]
+    nhan = json.loads(text_of(await mcp.call_tool("get_transcript", {"track": "Nhan", "on": "source"})))
+    assert len(nhan["segments"]) == 2
+    ranged = json.loads(text_of(await mcp.call_tool("get_transcript", {"start_f": 100, "end_f": 200})))
+    assert [s["text"] for s in ranged["segments"]] == ["Nghe nè."]
+    page1 = json.loads(text_of(await mcp.call_tool("get_transcript", {"limit": 1})))
+    assert len(page1["segments"]) == 1 and page1["next_cursor"]
+    page2 = json.loads(text_of(await mcp.call_tool("get_transcript", {"limit": 1, "cursor": page1["next_cursor"]})))
+    assert page2["segments"][0]["text"] == "Nghe nè." and page2["next_cursor"] is None

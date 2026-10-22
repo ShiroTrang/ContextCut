@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import shutil
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -15,7 +18,8 @@ from mcp.server.mcpserver.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, guide, jobs, paths, trackmap
+from . import __version__, guide, jobs, paths, trackmap, transcript
+from .analysis import asr
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
 
@@ -103,6 +107,53 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             return paths.companion_dir(await bridge_call("get_editor_state"))
         except paths.ProjectNotSaved as e:
             raise ToolError(str(e)) from e
+
+    async def all_recordings() -> list[dict[str, Any]]:
+        out, cursor = [], None
+        while True:
+            page = await bridge_call("list_recordings", present(limit=500, cursor=cursor))
+            out += page["recordings"]
+            if not (cursor := page.get("next_cursor")):
+                return out
+
+    async def whole_timeline() -> dict[str, Any]:
+        """Mọi item của sequence (gộp các trang) kèm revision của trang đầu."""
+        first = await bridge_call("get_timeline", {"limit": 1000})
+        items, cursor = list(first["items"]), first.get("next_cursor")
+        while cursor:
+            page = await bridge_call("get_timeline", {"limit": 1000, "cursor": cursor})
+            items += page["items"]
+            cursor = page.get("next_cursor")
+        return first | {"items": items}
+
+    async def timed_segments(recording: str | None, on: str) -> tuple[list[dict[str, Any]], dict[str, Any], Any]:
+        """Câu của transcript đã đổi ra frame (timeline hoặc nguồn) + thông tin trang (revision, fps) + store."""
+        comp = await companion()
+        store = trackmap.RecordingStore(comp)
+        recs = [await find_recording(recording)] if recording else await all_recordings()
+        loaded = []
+        for rec in recs:
+            info = store.get(rec["id"])
+            tr = transcript.load(comp, info["file_hash"]) if info and info["path"] == rec.get("path") else None
+            if tr:
+                loaded.append((rec["id"], tr))
+        if not loaded:
+            raise ToolError("Chưa có transcript cho " + (f"bản ghi {recording}" if recording else "bản ghi nào")
+                            + ": gọi transcribe(recording) rồi đợi job xong (get_job).")
+        if on == "timeline":
+            tl = await whole_timeline()
+            fps = tl["fps"]["num"] / tl["fps"]["den"]
+            segs = []
+            for rec_id, tr in loaded:
+                segs += transcript.on_timeline(tr, transcript.placements(tl["items"], rec_id), fps, rec_id)
+            meta = {"revision": tl["revision"], "fps": tl["fps"]}
+        else:
+            state = await bridge_call("get_editor_state")
+            fps = state["profile"]["fps"]["num"] / state["profile"]["fps"]["den"]
+            segs = [s for rec_id, tr in loaded for s in transcript.on_source(tr, fps, rec_id)]
+            meta = {"revision": "source", "fps": state["profile"]["fps"]}
+        segs.sort(key=lambda s: (s["start_f"], s["track"]))
+        return segs, meta | {"fps_value": fps}, store
 
     async def find_recording(rec_id: str) -> dict[str, Any]:
         cursor = None
@@ -257,6 +308,133 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
             return compact(job_view(jobs.cancel(job_id)))
         except KeyError as e:
             raise ToolError(f"Không có job {job_id!r}.") from e
+
+    @tool(PROJECT_DATA)
+    async def transcribe(
+        recording: Annotated[str, Field(min_length=1, description="id bản ghi (list_recordings)")],
+        tracks: Annotated[list[int] | None, Field(description="index stream audio cần phiên âm; bỏ trống = các track "
+                                                              "transcribe=true của track_map (Mic, Discord)")] = None,
+        language: Annotated[str, Field(min_length=2, max_length=8, description="mã ngôn ngữ, vd. vi, en")] = "vi",
+        model: Annotated[str | None, Field(description="large-v3 | phowhisper-large | parakeet-ctc-vi; bỏ trống = mặc định")] = None,
+        prompt: Annotated[str | None, Field(max_length=500, description="tên riêng/thuật ngữ để nghe đúng chính tả, "
+                                                                        "vd. \"Minecraft, creeper, Sang\"")] = None,
+        force: Annotated[bool, Field(description="phiên âm lại dù đã có transcript")] = False,
+        allow_download: Annotated[bool, Field(description="cho tải model còn thiếu; chỉ đặt true khi người dùng đã đồng ý")] = False,
+    ) -> str:
+        """Phiên âm lời thoại của một bản ghi theo từng từ (track Mic = Nhan, Discord = bạn bè). Chạy nền: trả job_id,
+        theo dõi bằng get_job (vài phút cho một buổi dài), xong thì đọc bằng get_transcript. Đã có transcript cùng model
+        thì trả ngay (cached). Thiếu model/thư viện thì báo dung lượng: hỏi người dùng trước khi cho tải."""
+        comp = await companion()
+        rec = await find_recording(recording)
+        store = trackmap.RecordingStore(comp)
+        try:
+            info = store.ensure(recording, rec["path"])
+        except OSError as e:
+            raise ToolError(f"Không đọc được file bản ghi {rec.get('path')}: {e}") from e
+        track_map = info["track_map"]
+        if tracks:
+            by_index = {t["index"]: t for t in track_map}
+            unknown = [i for i in tracks if i not in by_index]
+            if unknown:
+                raise ToolError(f"Bản ghi {recording} không có stream audio {unknown} (có: {list(by_index)}).")
+            chosen = [by_index[i] for i in tracks]
+        else:
+            chosen = [t for t in track_map if t["transcribe"]]
+        if not chosen:
+            raise ToolError("Không có track nào được đánh dấu phiên âm: dùng set_track_map hoặc truyền tracks.")
+        model = model or asr.DEFAULT_MODEL
+        if model not in asr.MODELS:
+            raise ToolError(f"Model {model!r} không có; chọn một trong: {', '.join(asr.MODELS)}.")
+        base = comp / "analysis" / info["file_hash"]
+        transcript_file = base / "transcript.json"
+        if transcript_file.exists() and not force:
+            done = json.loads(transcript_file.read_text(encoding="utf-8"))
+            have = {(t["index"], t.get("model"), t.get("language")) for t in done.get("tracks", [])}
+            if all((t["index"], model, language) in have for t in chosen):
+                wanted = {t["index"] for t in chosen}
+                return compact({"cached": True, "transcript": transcript_file.as_posix(), "model": model,
+                                "tracks": [t for t in done["tracks"] if t["index"] in wanted],
+                                "segments": sum(1 for s in done["segments"] if s["track"] in wanted)})
+        engine = asr.MODELS[model].engine
+        needed = "faster_whisper" if engine == "ctranslate2" else "nemo"
+        if importlib.util.find_spec(needed) is None or importlib.util.find_spec("huggingface_hub") is None:
+            extra = "analysis" if engine == "ctranslate2" else "parakeet"
+            raise ToolError(f"Chưa cài thư viện phân tích cho {model}: uv sync --directory contextcut-ai --extra {extra} "
+                            "(tải vài GB thư viện; hỏi người dùng trước).")
+        try:
+            asr.MODELS[model].locate(allow_download=False)
+        except asr.ModelMissing as e:
+            if not allow_download or asr.MODELS[model].local:
+                raise ToolError(f"{e} Hỏi người dùng có đồng ý tải không trước khi gọi lại.") from e
+        for job in jobs.recent(50):
+            p = job.get("params") or {}
+            if (job["kind"] == "transcribe" and job["status"] in jobs.ACTIVE and p.get("model") == model
+                    and (p.get("recording") or {}).get("file_hash") == info["file_hash"]):
+                return compact({"job_id": job["id"], "status": job["status"], "already_running": True})
+        if force:
+            for t in chosen:
+                shutil.rmtree(base / "asr" / f"{t['index']}-{model}-{language}", ignore_errors=True)
+        params = {"recording": {"id": recording, "path": info["path"], "file_hash": info["file_hash"]},
+                  "companion": Path(comp).as_posix(), "tracks": chosen, "language": language, "model": model,
+                  "prompt": prompt, "allow_download": allow_download}
+        job = jobs.submit("transcribe", params)
+        return compact({"job_id": job["id"], "status": job["status"], "model": model,
+                        "tracks": [{"index": t["index"], "role": t["role"], "speaker": t["speaker"]} for t in chosen],
+                        "next": "get_job(job_id) sau 30–60 s; xong thì get_transcript"})
+
+    @read_tool
+    async def get_transcript(
+        recording: Annotated[str | None, Field(description="id bản ghi; bỏ trống = mọi bản ghi đã có transcript")] = None,
+        start_f: Annotated[int | None, Field(ge=0, description="lấy câu giao [start_f, end_f)")] = None,
+        end_f: Annotated[int | None, Field(ge=1, description="frame cuối (không tính)")] = None,
+        track: Annotated[int | str | None, Field(description="index stream, role (mic, discord) hoặc tên người nói")] = None,
+        on: Annotated[Literal["timeline", "source"], Field(description="timeline: frame trên timeline đang mở (chỉ "
+                                                                         "phần bản ghi đang hiện); source: frame trên bản ghi gốc")] = "timeline",
+        words: Annotated[bool, Field(description="kèm từng từ với frame (để đặt câu đắt chính xác)")] = False,
+        limit: Annotated[int, Field(ge=1, le=500, description="số câu tối đa mỗi trang")] = 100,
+        cursor: Annotated[str | None, Field(description="next_cursor của trang trước; giữ nguyên bộ lọc")] = None,
+    ) -> str:
+        """Lời thoại đã phiên âm theo câu: người nói (Nhan, bạn bè…), start_f/end_f, tc (mm:ss.ff), chữ; low_conf là
+        từ máy nghe chưa chắc. Mặc định tính theo timeline đang mở: phần bị cắt khỏi timeline không có. Đọc theo
+        khoảng (start_f/end_f) để không tràn context; words=true khi cần mốc từng từ."""
+        segs, meta, store = await timed_segments(recording, on)
+        if track is not None:
+            def match(seg: dict[str, Any]) -> bool:
+                if isinstance(track, int):
+                    return seg["track"] == track
+                wanted = str(track).strip().lower()
+                info = store.get(seg["recording"]) or {}
+                roles = {t["index"]: t["role"] for t in info.get("track_map", [])}
+                return roles.get(seg["track"]) == wanted or (seg["speaker"] or "").lower() == wanted
+            segs = [s for s in segs if match(s)]
+        if start_f is not None:
+            segs = [s for s in segs if s["end_f"] > start_f]
+        if end_f is not None:
+            segs = [s for s in segs if s["start_f"] < end_f]
+        offset = 0
+        if cursor:
+            rev, _, off = cursor.rpartition(":")
+            if rev != str(meta["revision"]) or not off.isdigit():
+                raise ToolError("Timeline đã đổi (hoặc cursor sai) từ trang trước: đọc lại từ trang đầu (bỏ cursor).")
+            offset = int(off)
+        page = segs[offset:offset + limit]
+        out = []
+        for s in page:
+            item = {"recording": s["recording"], "track": s["track"], "speaker": s["speaker"], "start_f": s["start_f"],
+                    "end_f": s["end_f"], "tc": transcript.timecode(s["start_f"], meta["fps_value"]), "text": s["text"]}
+            if s["partial"]:
+                item["partial"] = True
+            if words:
+                item["words"] = [{"w": w["w"], "start_f": w["start_f"], "end_f": w["end_f"], "p": w.get("p")}
+                                 for w in s["words"]]
+            else:
+                low = [w["w"] for w in s["words"] if w.get("p") is not None and w["p"] < 0.4]
+                if low:
+                    item["low_conf"] = low
+            out.append(item)
+        more = offset + limit < len(segs)
+        return compact({"on": on, "revision": meta["revision"], "fps": meta["fps"], "total": len(segs),
+                        "segments": out, "next_cursor": f"{meta['revision']}:{offset + limit}" if more else None})
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,
