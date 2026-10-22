@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import importlib.util
 import json
+import os
 import time
 import shutil
 import subprocess
@@ -14,6 +17,7 @@ from collections.abc import AsyncIterator, Callable
 from fractions import Fraction
 from pathlib import Path
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
@@ -54,6 +58,7 @@ OpList = Annotated[list[dict[str, Any]], Field(min_length=1, max_length=200,
 
 MAX_IMAGES = 12  # ảnh mỗi lần gọi (design: 8–12)
 TILE_W = 256  # ô contact sheet: lưới 4×3 = 1024×432
+RENDER_WAIT_S = 45  # render_frames chờ job melt chừng này trước khi trả job_id
 
 FrameList = Annotated[list[Annotated[int, Field(ge=0)]], Field(min_length=1, max_length=MAX_IMAGES,
                                                                description="tối đa 12 frame, vd. [43380, 43440]")]
@@ -414,10 +419,10 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     async def get_job(
         job_id: Annotated[str | None, Field(description="job_id do transcribe… trả; bỏ trống để xem các job gần đây")] = None,
         wait_s: Annotated[int, Field(ge=0, le=55, description="chờ tối đa bấy nhiêu giây cho tới khi job xong rồi mới trả")] = 0,
-    ) -> str:
-        """Theo dõi job nền (phiên âm…): status queued | running | done | failed | cancelled, stage (đang làm gì),
-        progress 0…1, eta_s, result khi xong, error khi lỗi. Đợi job: gọi với wait_s=50 (tool tự chờ, trả ngay khi
-        xong) thay vì gọi dồn; job dài thì gọi lại vài lần như vậy."""
+    ) -> Any:
+        """Theo dõi job nền (phiên âm, dựng khung hình…): status queued | running | done | failed | cancelled, stage,
+        progress 0…1, eta_s, result khi xong (job render_frames trả kèm ảnh), error khi lỗi. Đợi job: gọi với wait_s=50
+        (tool tự chờ, trả ngay khi xong) thay vì gọi dồn; job dài thì gọi lại vài lần như vậy."""
         try:
             if job_id:
                 job = jobs.get(job_id)
@@ -425,6 +430,9 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
                 while job["status"] in jobs.ACTIVE and time.monotonic() < deadline:
                     await asyncio.sleep(0.5)
                     job = jobs.get(job_id)
+                if job["kind"] == "render_frames" and job["status"] == "done":
+                    shots = [Path(f["path"]) for f in (job.get("result") or {}).get("frames", [])]
+                    return [compact(job_view(job)), *[Image(path=shot) for shot in shots if shot.exists()]]
                 return compact(job_view(job))
             return compact({"jobs": [job_view(j) for j in jobs.recent()]})
         except KeyError as e:
@@ -674,6 +682,74 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         info = {"recording": recording, "on": on, "range": [start_f, end_f], "source_fps": str(source_fps),
                 "size": [cols * TILE_W, used_rows * (TILE_W * 9 // 16)], "path": out.as_posix(), "cells": cells}
         return [compact(info), Image(path=out)]
+
+    @read_tool
+    async def render_frames(
+        frames: FrameList,
+        width: ImageWidth = 512,
+        originals: Annotated[bool, Field(description="file gốc thay proxy (đúng như xuất); false = proxy, nhanh hơn")] = True,
+    ) -> list[Any]:
+        """Xem timeline ĐÃ DỰNG ở các frame timeline (≤ 12 ảnh): cùng engine và hiệu ứng với file xuất (cắt, zoom, chữ,
+        phụ đề). Dùng để tự kiểm sau khi sửa. melt chạy nền, thường vài giây; quá 45 s thì trả job_id, get_job trả ảnh
+        khi xong. Ảnh lưu thành file, đường dẫn trong phần chữ."""
+        scene = await bridge_call("get_scene", {"originals": originals})
+        late = sorted({f for f in frames if f >= scene["duration_f"]})
+        if late:
+            raise ToolError(f"Frame {late} nằm sau cuối timeline ({scene['duration_f']} frame).")
+        _, comp = await vision_context()
+        renders = vision.frames_root(comp) / "render"
+        # Cùng XML (cùng timeline, cùng lựa chọn proxy) thì dùng lại ảnh đã dựng
+        folder = renders / hashlib.sha1(scene["xml"].encode("utf-8")).hexdigest()[:16]
+        folder.mkdir(parents=True, exist_ok=True)
+        scene_file = folder / "scene.mlt"
+        if not scene_file.exists():
+            scene_file.write_text(scene["xml"], encoding="utf-8")
+        os.utime(folder)  # prune giữ các scene dùng gần đây
+        profile = scene["profile"]
+        height = max(2, round(width * profile["height"] / profile["width"] / 2) * 2)
+        missing = sorted({f for f in frames if not (folder / f"{f}-{width}.jpg").exists()})
+        job_id = None
+        if missing:
+            job = jobs.submit("render_frames", {"scene": scene_file.as_posix(), "frames": missing, "width": width,
+                                                "height": height, "out_dir": folder.as_posix()})
+            job_id = job["id"]
+            deadline = time.monotonic() + RENDER_WAIT_S
+            while job["status"] in jobs.ACTIVE and time.monotonic() < deadline:
+                await asyncio.sleep(0.3)
+                job = jobs.get(job_id)
+            if job["status"] != "done":
+                if job["status"] in jobs.ACTIVE:
+                    return [compact({"job_id": job_id, "status": job["status"], "stage": job.get("stage"),
+                                     "next": "get_job(job_id, wait_s=50): xong thì trả ảnh"})]
+                raise ToolError(f"Dựng khung hình lỗi: {job.get('error')} (log: {job.get('log')}).")
+        vision.prune(renders, keep=20)
+        fps = profile["fps"]["num"] / profile["fps"]["den"]
+        listed = [{"f": f, "tc": transcript.timecode(f, fps), "path": (folder / f"{f}-{width}.jpg").as_posix()}
+                  for f in frames]
+        info = {"revision": scene["revision"], "originals": originals, "cached": not missing, "job_id": job_id,
+                "frames": listed}
+        return [compact(info), *[Image(path=Path(item["path"])) for item in listed]]
+
+    @read_tool
+    async def get_viewer_frame(
+        monitor: Annotated[Literal["active", "project", "clip"], Field(
+            description="active: monitor người dùng đang dùng; project: timeline; clip: monitor clip")] = "active",
+        at_f: Annotated[int | None, Field(ge=0, description="dời playhead monitor project tới frame này trước "
+                                                            "(người dùng thấy playhead nhảy tới đó)")] = None,
+        width: ImageWidth = 512,
+    ) -> list[Any]:
+        """Khung hình người dùng đang xem trong monitor ở playhead, đúng như app hiện (proxy, chất lượng preview): để bàn
+        về "chỗ này" với người dùng. at_f dời playhead tới đó trước. Cần ảnh như file xuất thì dùng render_frames."""
+        fps, comp = await vision_context()
+        shot = await bridge_call("get_viewer_frame", present(monitor=monitor, at_f=at_f, width=width))
+        folder = vision.frames_root(comp) / "viewer"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{datetime.now():%Y%m%d-%H%M%S-%f}-{shot['position_f']}.jpg"
+        path.write_bytes(base64.b64decode(shot["data"]))
+        vision.prune(folder, keep=30)
+        info = {k: shot.get(k) for k in ("monitor", "position_f", "playing", "clip", "width", "height")}
+        info |= {"tc": transcript.timecode(shot["position_f"], float(fps)), "path": path.as_posix()}
+        return [compact(info), Image(path=path)]
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,

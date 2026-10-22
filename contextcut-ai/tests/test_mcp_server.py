@@ -5,6 +5,7 @@ import copy
 import json
 import subprocess
 import sys
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from mcp import Client
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from p2_fixture import make_frame_code_video, make_obs_mkv, read_frame_code  # noqa: E402
 
-from contextcut_ai import guide, paths, trackmap
+from contextcut_ai import guide, paths, trackmap, vision
 from contextcut_ai.analysis import asr
 from contextcut_ai.bridge_client import BridgeClient
 from contextcut_ai.mcp_server import build_server
@@ -34,7 +35,8 @@ def text_of(result) -> str:
 
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
-              "validate_operations", "get_job", "get_transcript", "get_source_frames", "get_contact_sheet"}
+              "validate_operations", "get_job", "get_transcript", "get_source_frames", "get_contact_sheet",
+              "render_frames", "get_viewer_frame"}
 EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe",
               "add_subtitles"}
 
@@ -589,3 +591,57 @@ async def test_vision_unsaved_project_uses_data_dir(mcp, bridge, tmp_path, code6
     assert len(images) == 1
     assert (tmp_path / "data" / "frames") in Path(out["frames"][0]["path"]).parents
     assert not (tmp_path / "Bắt Nạt Hải Sản.contextcut").exists()
+
+
+# --- P2b: render_frames, get_viewer_frame (Task 16) ----------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def render_scene(tmp_path_factory, code60) -> Path:
+    from test_render import melt_scene
+    try:
+        paths.find_tool("melt")
+    except paths.ToolMissing:
+        pytest.skip("cần melt")
+    return melt_scene(code60, tmp_path_factory.mktemp("scene") / "scene.mlt")
+
+
+def scene_project(bridge, tmp_path, scene: Path, monkeypatch) -> Path:
+    monkeypatch.setenv("CONTEXTCUT_DATA_DIR", str(tmp_path / "data"))
+    companion = tmp_path / "Bắt Nạt Hải Sản.contextcut"
+    with_companion(bridge, companion)
+    bridge.responses["get_scene"] = {"revision": 1873402, "xml": scene.read_text(encoding="utf-8"), "root": None,
+                                     "profile": {"fps": {"num": 25, "den": 1}, "width": 1280, "height": 720},
+                                     "duration_f": 100, "proxies": False}
+    return companion
+
+
+async def test_render_frames_tool_cache_and_job(mcp, bridge, tmp_path, monkeypatch, render_scene):
+    from contextcut_ai import jobs
+    companion = scene_project(bridge, tmp_path, render_scene, monkeypatch)
+    out, images = split_content(await mcp.call_tool("render_frames", {"frames": [40, 3], "width": 320}))
+    assert [f["f"] for f in out["frames"]] == [40, 3] and out["frames"][1]["tc"] == "00:00.03"
+    assert [image_frame_code(img, tmp_path) for img in images] == [96, 7]
+    assert out["job_id"] and not out["cached"]
+    for f in out["frames"]:
+        assert (companion / "render") in Path(f["path"]).parents
+    again, images = split_content(await mcp.call_tool("render_frames", {"frames": [3], "width": 320}))
+    assert again["cached"] and again["job_id"] is None and len(images) == 1
+    assert len(jobs.recent()) == 1
+    shown = await mcp.call_tool("get_job", {"job_id": out["job_id"]})
+    view, job_images = split_content(shown)
+    assert view["status"] == "done" and [image_frame_code(i, tmp_path) for i in job_images] == [7, 96]
+    beyond = await mcp.call_tool("render_frames", {"frames": [100]})
+    assert beyond.is_error and "100" in beyond.content[0].text
+
+
+async def test_viewer_frame_tool(mcp, bridge, tmp_path, code60):
+    companion = vision_project(bridge, tmp_path, code60)
+    frame = vision.extract_frames(code60, [77], Fraction(60), 320, tmp_path / "x")[77]
+    bridge.responses["get_viewer_frame"] = {"monitor": "project", "position_f": 4321, "playing": False, "clip": None,
+                                            "width": 320, "height": 180, "format": "jpeg",
+                                            "data": base64.b64encode(frame.read_bytes()).decode()}
+    out, images = split_content(await mcp.call_tool("get_viewer_frame", {"at_f": 4321, "width": 320}))
+    assert out["position_f"] == 4321 and out["tc"] == "01:12.01" and out["monitor"] == "project"
+    assert [image_frame_code(img, tmp_path) for img in images] == [77]
+    assert (companion / "viewer") in Path(out["path"]).parents
+    assert bridge.calls[-1] == ("get_viewer_frame", {"monitor": "active", "at_f": 4321, "width": 320})

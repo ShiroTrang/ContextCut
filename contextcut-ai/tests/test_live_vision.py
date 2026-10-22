@@ -117,3 +117,34 @@ async def test_viewer_frame_bad_params(app, clean):
     await expect_error(app.call("get_viewer_frame", {"monitor": "clip", "at_f": 3}), "invalid_params")
     await expect_error(app.call("get_viewer_frame", {"monitor": "tivi"}), "invalid_params")
     await expect_error(app.call("get_viewer_frame", {"width": 4000}), "invalid_params")
+
+
+@pytest.fixture
+async def mcp_live(app, tmp_path, monkeypatch):
+    from mcp import Client
+
+    from contextcut_ai.mcp_server import build_server
+    monkeypatch.setenv("CONTEXTCUT_DATA_DIR", str(tmp_path / "data"))  # job render của test không lẫn job thật
+    async with Client(build_server(BridgeClient())) as client:
+        yield client
+
+
+def images_of(result, tmp_path: Path) -> list[Path]:
+    assert not result.is_error, result.content[0].text
+    out = []
+    for i, image in enumerate(result.content[1:]):
+        out.append(save_jpeg(image.data, tmp_path / f"mcp-{i}.jpg"))
+    return out
+
+
+async def test_render_frames_live(code_clip, mcp_live, tmp_path):
+    result = await mcp_live.call_tool("render_frames", {"frames": [code_clip + 31, code_clip + 2], "width": 320})
+    shots = images_of(result, tmp_path)
+    assert [read_frame_code(s) for s in shots] == [expected_code(31), expected_code(2)]
+    assert image_size(shots[0]) == (320, 180)
+
+
+async def test_viewer_frame_tool_live(code_clip, mcp_live, tmp_path):
+    result = await mcp_live.call_tool("get_viewer_frame", {"at_f": code_clip + 12, "width": 320})
+    (shot,) = images_of(result, tmp_path)
+    assert read_frame_code(shot) == expected_code(12)

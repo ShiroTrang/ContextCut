@@ -39,6 +39,7 @@ def sleep_kind(params: dict[str, Any], report: Report) -> dict[str, Any]:
 KINDS: dict[str, tuple[str, bool]] = {
     "sleep": ("contextcut_ai.analysis.worker:sleep_kind", True),
     "transcribe": ("contextcut_ai.analysis.transcribe:run", True),
+    "render_frames": ("contextcut_ai.render:run_frames", False),  # melt giải mã bằng CPU
 }
 
 
