@@ -6,23 +6,31 @@ import tomllib
 
 import pytest
 
-from contextcut_ai import agent_docs
+from contextcut_ai import agent_docs, register
 from contextcut_ai.register import Context, main, plan
 
 UV = "C:/tools/uv.exe"
-ARGS = ["--directory", "D:/repo/contextcut-ai", "run", "--frozen", "contextcut-ai"]
+ARGS = ["--directory", "D:/repo/contextcut-ai", "run", "--no-sync", "contextcut-ai"]
 WANT = {"command": UV, "args": ARGS}
+
+
+def claude_get(command: str, args: list[str], scope: str = "User config (available in all your projects)") -> str:
+    """Output của `claude mcp get contextcut` (Claude Code 2.1)."""
+    return (f"contextcut:\n  Scope: {scope}\n  Status: ✓ Connected\n  Type: stdio\n  Command: {command}\n"
+            f"  Args: {' '.join(args)}\n  Environment:\n\nTo remove this server, run: claude mcp remove \"contextcut\" -s user\n")
 
 
 class FakeRunner:
     def __init__(self, registered: bool = False):
         self.registered = registered
+        self.get_stdout = ""
         self.commands: list[list[str]] = []
 
     def __call__(self, cmd: list[str]) -> subprocess.CompletedProcess:
         self.commands.append(cmd)
-        code = 0 if cmd[1:3] != ["mcp", "get"] or self.registered else 1
-        return subprocess.CompletedProcess(cmd, code, stdout="", stderr="")
+        is_get = cmd[1:3] == ["mcp", "get"]
+        code = 0 if not is_get or self.registered else 1
+        return subprocess.CompletedProcess(cmd, code, stdout=self.get_stdout if is_get else "", stderr="")
 
 
 @pytest.fixture
@@ -129,7 +137,35 @@ def test_claude_code_uses_cli(ctx):
     add.apply()
     assert ctx.run.commands[-1] == ["C:/npm/claude.cmd", "mcp", "add", "--scope", "user", "contextcut", "--", UV, *ARGS]
     ctx.run.registered = True
+    ctx.run.get_stdout = claude_get(UV.replace("/", "\\"), ARGS)
     assert {c.target: c for c in plan(ctx)}["claude mcp (scope user)"].apply is None
+
+
+def test_claude_code_replaces_stale_command(ctx):
+    ctx.which = lambda name: "C:/npm/claude.cmd" if name == "claude" else None
+    ctx.run.registered = True
+    ctx.run.get_stdout = claude_get(UV, ["--directory", "D:/repo/contextcut-ai", "run", "--frozen", "contextcut-ai"])
+    change = {c.target: c for c in plan(ctx)}["claude mcp (scope user)"]
+    assert change.apply is not None and "--no-sync" in change.preview
+    change.apply()
+    assert ctx.run.commands[-2:] == [["C:/npm/claude.cmd", "mcp", "remove", "contextcut", "-s", "user"],
+                                     ["C:/npm/claude.cmd", "mcp", "add", "--scope", "user", "contextcut", "--", UV, *ARGS]]
+
+
+@pytest.mark.parametrize("out", ["", claude_get(UV, ["run", "--frozen", "x"], scope="Local config (private to you in this project)")])
+def test_claude_code_unreadable_or_other_scope_is_left_alone(ctx, out):
+    ctx.which = lambda name: "C:/npm/claude.cmd" if name == "claude" else None
+    ctx.run.registered = True
+    ctx.run.get_stdout = out
+    change = {c.target: c for c in plan(ctx)}["claude mcp (scope user)"]
+    assert change.apply is None and "claude mcp remove" in change.summary
+
+
+def test_server_command_does_not_sync(monkeypatch):
+    # uv run mặc định cài lại project khi pyproject đổi; Windows khoá contextcut-ai.exe khi client khác đang chạy server
+    monkeypatch.setattr(register.shutil, "which", lambda name: "C:/tools/uv.exe")
+    command, args = register.server_command()
+    assert args[-3:] == ["run", "--no-sync", "contextcut-ai"]
 
 
 def test_claude_code_skill(ctx):

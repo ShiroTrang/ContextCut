@@ -62,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Thông báo "đang xử lý" trên thanh trạng thái của Kdenlive giữ tối thiểu 4 s trước khi thông báo khác thay.
 - Dựng một khung hình từ `.kdenlive` để tự kiểm: trong bash UCRT64 `MLT_REPOSITORY_DENY=libmltjackrack:libmltladspa melt -quiet x.kdenlive in=N out=N -consumer avformat:f.png vcodec=png an=1`.
 - `codex exec` không duyệt được tool MCP sửa (chính sách `never`): thử sửa bằng Codex thì chạy tương tác.
-- `uv sync` cài lại project khi `pyproject.toml` đổi: đóng mọi AI client đang chạy server `contextcut-ai` trước (Windows khoá `contextcut-ai.exe`); test chạy `uv run --no-sync`.
+- `uv sync` cài lại project khi `pyproject.toml` đổi: đóng mọi AI client đang chạy server `contextcut-ai` trước (Windows khoá `contextcut-ai.exe`), giữ đúng các `--extra`; test chạy `uv run --no-sync`. Server đăng ký bằng `uv run --no-sync` (không tự cài; trước đây `--frozen` tự cài nên client mới báo "Connection closed" khi client khác còn giữ khoá). Client còn đăng ký `--frozen`: chạy lại `register_clients.py`.
 - Kdenlive treo khi tạo proxy (bản ghi OBS HEVC; luồng giao diện kẹt trong `ProxyTask::processLogInfo`): `QProcess` bị đọc chéo luồng. **Đã vá** (`proxytask.cpp`, `patches.md`); cách tái hiện chắc chắn (`-loglevel debug` trong `proxyparams`) ở cuối `docs/handoff/P2a.md`. Các job Kdenlive khác cùng kiểu kết nối chưa vá.
 - `-i` với một mục rỗng (`",a.mkv"`) nhập **cả thư mục hiện tại, đệ quy**. PowerShell 5.1 đọc `.ps1` UTF-8 không BOM như ANSI: đừng để tên có dấu trong script.
 - Chạy bản sao `stage` ở thư mục khác thì nó ghi `mltpath` của nó vào `contextcutrc`; sửa lại về `…/contextcut/stage/share/mlt/profiles`.

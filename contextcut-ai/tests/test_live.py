@@ -32,7 +32,7 @@ async def app_running():
 
 async def test_read_tools_over_stdio(app_running):
     server = StdioServerParameters(command=shutil.which("uv"),
-                                   args=["--directory", str(PROJECT_DIR), "run", "--frozen", "contextcut-ai"],
+                                   args=["--directory", str(PROJECT_DIR), "run", "--no-sync", "contextcut-ai"],
                                    env=dict(os.environ))
     async with Client(server) as mcp:
         state = await mcp.call_tool("get_editor_state", {})

@@ -27,14 +27,16 @@ from . import agent_docs
 SERVER = "contextcut"
 PROJECT_DIR = Path(__file__).resolve().parents[2]  # contextcut-ai/
 CLIENTS = ["claude-code", "claude-desktop", "codex", "antigravity"]
-CODEX_TIMEOUT = 60  # giây; lần chạy đầu uv có thể phải cài gói
+CODEX_TIMEOUT = 60  # giây; lần đầu nạp Python + thư viện có thể chậm
 
 
 def server_command(project_dir: Path = PROJECT_DIR) -> tuple[str, list[str]]:
     uv = shutil.which("uv")
     if uv is None:
         raise SystemExit("không thấy uv trên PATH (cài: https://docs.astral.sh/uv/)")
-    return str(Path(uv).resolve()), ["--directory", str(project_dir), "run", "--frozen", "contextcut-ai"]
+    # --no-sync: `uv run` (kể cả --frozen) cài lại project khi pyproject đổi, mà Windows khoá contextcut-ai.exe
+    # khi một client khác đang chạy server → server mới thoát ngay ("Connection closed"). Cài bằng `uv sync`.
+    return str(Path(uv).resolve()), ["--directory", str(project_dir), "run", "--no-sync", "contextcut-ai"]
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -165,24 +167,48 @@ def _glob(base: Path | None, pattern: str) -> list[Path]:
     return sorted(base.glob(pattern)) if base is not None and base.is_dir() else []
 
 
+def _claude_registered(out: str) -> tuple[str, str] | None:
+    """(Command, Args) của server scope user trong output `claude mcp get`; None nếu scope khác hoặc không đọc được."""
+    if "Scope: User" not in out:
+        return None
+    fields = dict(m.groups() for m in re.finditer(r"^\s*(Command|Args):[ \t]*(.*?)[ \t]*$", out, re.M))
+    if "Command" not in fields:
+        return None
+    return os.path.normcase(os.path.normpath(fields["Command"])), fields.get("Args", "")
+
+
+def _run_all(ctx: Context, *cmds: list[str]) -> Callable[[], str]:
+    def apply() -> str:
+        out = []
+        for cmd in cmds:
+            done = ctx.run(cmd)
+            if done.returncode != 0:
+                raise RuntimeError(f"claude {' '.join(cmd[1:3])} lỗi {done.returncode}: {done.stderr.strip()}")
+            out.append(done.stdout.strip())
+        return "\n".join(o for o in out if o) or "đã ghi"
+    return apply
+
+
 def _claude_code(ctx: Context) -> list[Change]:
     changes = []
     uv, args = ctx.command
     claude = ctx.which("claude")
     if claude:
-        if ctx.run([claude, "mcp", "get", SERVER]).returncode == 0:
+        add = [claude, "mcp", "add", "--scope", "user", SERVER, "--", uv, *args]
+        got = ctx.run([claude, "mcp", "get", SERVER])
+        if got.returncode != 0:
+            changes.append(Change("Claude Code", "claude mcp (scope user)", f"thêm server {SERVER} bằng lệnh",
+                                  subprocess.list2cmdline(add), _run_all(ctx, add)))
+        elif (registered := _claude_registered(got.stdout)) is None:
             changes.append(Change("Claude Code", "claude mcp (scope user)",
                                   f"đã có server {SERVER} (muốn thay: claude mcp remove {SERVER} -s user, rồi chạy lại)"))
+        elif registered == (os.path.normcase(os.path.normpath(uv)), " ".join(args)):  # claude in Args nối bằng dấu cách
+            changes.append(Change("Claude Code", "claude mcp (scope user)", f"server {SERVER} đã đúng lệnh, bỏ qua"))
         else:
-            cmd = [claude, "mcp", "add", "--scope", "user", SERVER, "--", uv, *args]
-
-            def apply() -> str:
-                done = ctx.run(cmd)
-                if done.returncode != 0:
-                    raise RuntimeError(f"claude mcp add lỗi {done.returncode}: {done.stderr.strip()}")
-                return done.stdout.strip() or "đã thêm"
-            changes.append(Change("Claude Code", "claude mcp (scope user)", f"thêm server {SERVER} bằng lệnh",
-                                  subprocess.list2cmdline(cmd), apply))
+            remove = [claude, "mcp", "remove", SERVER, "-s", "user"]
+            changes.append(Change("Claude Code", "claude mcp (scope user)", f"thay lệnh server {SERVER} (gỡ rồi thêm lại)",
+                                  f"{subprocess.list2cmdline(remove)}\n{subprocess.list2cmdline(add)}",
+                                  _run_all(ctx, remove, add)))
     if (ctx.home / ".claude").is_dir():
         path = ctx.home / ".claude" / "skills" / "contextcut-editor" / "SKILL.md"
         new = agent_docs.render_skill()
@@ -242,6 +268,8 @@ def main(argv: list[str] | None = None, ask: Callable[[str], str] = input, ctx: 
     ctx = ctx or Context()
     uv, uv_args = ctx.command
     print(f"Server {SERVER}: {subprocess.list2cmdline([uv, *uv_args])}")
+    if not (PROJECT_DIR / ".venv").is_dir():
+        print(f"Chưa có môi trường: chạy `uv sync --directory {PROJECT_DIR}` trước (server chạy --no-sync, không tự cài)")
     changes = plan(ctx, args.client)
     if not changes:
         print("Không thấy AI client nào (Claude Code, Claude Desktop, Codex, Antigravity).")

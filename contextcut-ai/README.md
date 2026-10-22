@@ -35,7 +35,7 @@ uv sync --directory contextcut-ai --extra analysis                    # faster-w
 uv sync --directory contextcut-ai --extra analysis --extra parakeet   # + NeMo/PyTorch CUDA cho parakeet-ctc-vi (~4,4 GB)
 ```
 
-`uv sync` cài lại project, nên **đóng mọi AI client** đang chạy server này trước (Windows khoá `contextcut-ai.exe`); không đóng được thì `--no-install-project --inexact`.
+`uv sync` cài lại project, nên **đóng mọi AI client** đang chạy server này trước (Windows khoá `contextcut-ai.exe`); không đóng được thì `--no-install-project --inexact`. Giữ đúng các `--extra` đang dùng: `uv sync` thiếu extra nào thì gỡ thư viện của extra đó.
 
 ## Lệnh
 
@@ -48,7 +48,7 @@ uv run --directory contextcut-ai python scripts/register_clients.py --dry-run   
 uv run --directory contextcut-ai python scripts/register_clients.py             # ghi (hỏi y/N từng thay đổi)
 ```
 
-Lệnh server mà client chạy: `<uv.exe> --directory <repo>\contextcut-ai run --frozen contextcut-ai`.
+Lệnh server mà client chạy: `<uv.exe> --directory <repo>\contextcut-ai run --no-sync contextcut-ai`. `--no-sync` vì `uv run` (kể cả `--frozen`) tự cài lại project khi `pyproject.toml` đổi; nếu một client khác đang chạy server thì Windows khoá `contextcut-ai.exe`, server mới thoát ngay và client báo "Connection closed". Hệ quả: server không tự cài gì, nên sau khi kéo code có `pyproject.toml`/`uv.lock` đổi thì đóng các client, chạy `uv sync` như mục trên, rồi mở lại. Client đã đăng ký bằng lệnh cũ (`--frozen`): chạy lại `register_clients.py` (với Claude Code, script đề nghị `claude mcp remove` rồi `add` lại).
 
 ## Sửa guide
 
