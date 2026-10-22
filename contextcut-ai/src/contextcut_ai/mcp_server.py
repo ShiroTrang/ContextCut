@@ -27,7 +27,7 @@ from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, captions, guide, jobs, media, paths, trackmap, transcript, vision
+from . import __version__, captions, exporter, guide, jobs, media, paths, trackmap, transcript, vision
 from .analysis import asr
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
@@ -61,6 +61,8 @@ OpList = Annotated[list[dict[str, Any]], Field(min_length=1, max_length=200,
 MAX_IMAGES = 12  # ảnh mỗi lần gọi (design: 8–12)
 TILE_W = 256  # ô contact sheet: lưới 4×3 = 1024×432
 RENDER_WAIT_S = 45  # render_frames chờ job melt chừng này trước khi trả job_id
+EXPORT_WAIT_S = 50  # export chờ người dùng bấm Xuất chừng này trước khi trả job_id (client MCP hết giờ ~60 s)
+OPEN_WAIT_MAX_S = 55
 
 FrameList = Annotated[list[Annotated[int, Field(ge=0)]], Field(min_length=1, max_length=MAX_IMAGES,
                                                                description="tối đa 12 frame, vd. [43380, 43440]")]
@@ -219,6 +221,14 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
                     snapped.append({"op_index": i} | info)
             out.append(op)
         return out, snapped
+
+    async def source_paths() -> list[str]:
+        out, cursor = [], None
+        while True:
+            page = await bridge_call("list_sources", present(limit=500, cursor=cursor))
+            out += [src["path"] for src in page["sources"] if src.get("path")]
+            if not (cursor := page.get("next_cursor")):
+                return out
 
     async def find_recording(rec_id: str) -> dict[str, Any]:
         cursor = None
@@ -752,6 +762,136 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         info = {k: shot.get(k) for k in ("monitor", "position_f", "playing", "clip", "width", "height")}
         info |= {"tc": transcript.timecode(shot["position_f"], float(fps)), "path": path.as_posix()}
         return [compact(info), Image(path=path)]
+
+    @tool(ADDITIVE)
+    async def export(
+        output: Annotated[str, Field(min_length=1, description="Đường dẫn tuyệt đối file .mp4 người dùng chọn, "
+                                                                "vd. D:/Videos/Tập 1.mp4 (không trùng file nguồn)")],
+        start_f: Annotated[int | None, Field(ge=0, description="đầu đoạn xuất; mặc định 0")] = None,
+        end_f: Annotated[int | None, Field(ge=1, description="cuối đoạn (không tính); mặc định hết timeline")] = None,
+        preset: Annotated[Literal["youtube-1080p60", "project"], Field(
+            description="youtube-1080p60: project phải là 1920×1080 60 fps; project: giữ cỡ/fps của project")] = "youtube-1080p60",
+        encoder: Annotated[Literal["auto", "nvenc", "x264"], Field(
+            description="auto: NVENC (GPU), lỗi thì x264 (CPU, chậm hơn)")] = "auto",
+        overwrite: Annotated[bool, Field(description="ghi đè file đã có ở output; chỉ khi người dùng đã đồng ý")] = False,
+        originals: Annotated[bool, Field(description="dùng file gốc thay proxy (đúng chất lượng); false chỉ để thử nhanh")] = True,
+    ) -> str:
+        """Xuất timeline (hoặc đoạn [start_f, end_f)) ra MP4 H.264 + AAC. Chỉ gọi khi người dùng bảo xuất và đã chọn
+        chỗ lưu. ContextCut hiện hộp hỏi người dùng; file chỉ được ghi khi họ bấm "Xuất" trong app (agent không bấm thay,
+        không lách). Đồng ý thì job nền dựng bằng melt (như preview), NVENC, lỗi thì x264, rồi kiểm bằng ffprobe (số
+        frame, thời lượng, lệch hình/tiếng < 1 frame). Trả job_id: get_job(job_id, wait_s=50) tới khi done, đọc
+        result.ok/checks và báo người dùng."""
+        state = await bridge_call("get_editor_state")
+        duration = state["sequence"]["duration_f"]
+        lo = start_f or 0
+        hi = end_f if end_f is not None else duration
+        if not 0 <= lo < hi <= duration:
+            raise ToolError(f"Khoảng xuất phải nằm trong timeline: 0 ≤ start_f < end_f ≤ {duration}.")
+        sources = await source_paths()
+        try:
+            exporter.check_preset(preset, state["profile"])
+            out = exporter.check_output(output, sources=sources, project=state["project"].get("path"), overwrite=overwrite)
+        except ValueError as e:
+            raise ToolError(str(e)) from e
+        for job in jobs.recent(50):
+            if (job["kind"] == "export" and job["status"] in jobs.ACTIVE
+                    and os.path.normcase((job.get("params") or {}).get("output", "")) == os.path.normcase(out.as_posix())):
+                return compact({"job_id": job["id"], "status": job["status"], "stage": job.get("stage"),
+                                "already_running": True, "next": "get_job(job_id, wait_s=50)"})
+        confirm = await bridge_call("request_confirmation", {
+            "kind": "export", "output": out.as_posix(), "start_f": lo, "end_f": hi, "preset": preset,
+            "encoder": encoder, "overwrite": overwrite})
+        job = jobs.submit("export", {
+            "confirm_id": confirm["confirm_id"], "output": out.as_posix(), "start_f": lo, "end_f": hi, "preset": preset,
+            "encoder": encoder, "overwrite": overwrite, "originals": originals, "profile": state["profile"],
+            "sources": sources, "project": state["project"].get("path")})
+        waiting = (exporter.WAITING_STAGE, "bắt đầu", "đang khởi động worker")
+        deadline = time.monotonic() + EXPORT_WAIT_S
+        while job["status"] in jobs.ACTIVE and job.get("stage") in waiting and time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            job = jobs.get(job["id"])
+        if job["status"] in jobs.ACTIVE and job.get("stage") in waiting:
+            hint = ('Người dùng chưa trả lời: nhắc họ bấm "Xuất" (hoặc "Không xuất") trong hộp của ContextCut, rồi '
+                    "get_job(job_id, wait_s=50).")
+        elif job["status"] in jobs.ACTIVE:
+            hint = "Người dùng đã đồng ý, đang xuất: get_job(job_id, wait_s=50) tới khi done rồi báo result.checks."
+        elif job["status"] == "cancelled":
+            hint = "Không xuất (người dùng từ chối hoặc đã huỷ): không gọi lại trừ khi người dùng bảo."
+        else:
+            hint = "Xem error/result."
+        fps = state["profile"]["fps"]["num"] / state["profile"]["fps"]["den"]
+        view = {"job_id": job["id"], "status": job["status"], "stage": job.get("stage"), "output": out.as_posix(),
+                "range": [lo, hi], "tc": [transcript.timecode(lo, fps), transcript.timecode(hi, fps)], "preset": preset,
+                "encoder": encoder, "confirm_id": confirm["confirm_id"], "next": hint}
+        if job["status"] == "failed":
+            view["error"] = job.get("error")
+        return compact(view)
+
+    open_requests: dict[str, str] = {}  # đường dẫn (normcase) → request_id của lần mở đang chờ
+
+    @tool(ADDITIVE)
+    async def open_project(
+        path: Annotated[str, Field(min_length=1, description="Đường dẫn tuyệt đối file .kdenlive, vd. D:/Videos/Tập 2.kdenlive")],
+        wait_s: Annotated[int, Field(ge=0, le=OPEN_WAIT_MAX_S, description="chờ tối đa bấy nhiêu giây cho tới khi mở xong")] = 50,
+    ) -> str:
+        """Mở project .kdenlive khác trong ContextCut (như File › Open). Project đang mở có thay đổi chưa lưu thì app hỏi
+        người dùng Save / Don't Save / Cancel: người dùng chọn, agent không chọn thay. Trả state: opened (kèm tóm tắt
+        project mới), pending (app đang hỏi gì đó: dialog; nhờ người dùng trả lời rồi gọi lại open_project cùng path
+        để chờ tiếp), cancelled (người dùng bấm Cancel, project cũ còn nguyên), failed. Mọi id clip/track/batch cũ hết
+        giá trị sau khi mở."""
+        key = os.path.normcase(path)
+        out: dict[str, Any] = {"path": path}
+        try:
+            started = await bridge.call("open_project", {"path": path}, resend=False)
+            request_id = started.get("request_id")
+            out |= {"path": started["path"], "previous_project_modified": started.get("modified")}
+            if started.get("already_open"):
+                out["already_open"] = True
+            if request_id:
+                open_requests[key] = request_id
+        except RpcError as e:
+            if e.kind == "busy" and key in open_requests and "opening" in e.message:
+                request_id = open_requests[key]  # lần gọi trước còn đang chờ: chờ tiếp
+            else:
+                raise ToolError(agent_message(e)) from e
+        except BridgeError as e:
+            raise ToolError(agent_message(e)) from e
+        deadline = time.monotonic() + wait_s
+        status: dict[str, Any] = {"state": "opened"}
+        if request_id:
+            while True:
+                status = await bridge_call("get_open_status", {"request_id": request_id})
+                if status["state"] != "pending" or time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(0.5)
+            if status["state"] != "pending":
+                open_requests.pop(key, None)
+            out["path"] = status.get("path") or out["path"]
+        out["state"] = status["state"]
+        if status["state"] == "pending":
+            dialog = status.get("dialog")
+            out["dialog"] = dialog
+            out["next"] = ((f'ContextCut đang hỏi người dùng: "{dialog["title"]}": {dialog["text"]} Nhờ họ trả lời trong '
+                            "app (agent không chọn thay), rồi gọi lại open_project cùng path.") if dialog else
+                           "ContextCut đang mở/nạp project: gọi lại open_project cùng path để chờ tiếp.")
+            return compact(out)
+        if status["state"] != "opened":
+            out["message"] = status.get("message")
+            return compact(out)
+        while True:  # mở xong; Kdenlive còn nạp thì get_editor_state báo busy một lúc
+            try:
+                state = await bridge.call("get_editor_state")
+                break
+            except RpcError as e:
+                if e.kind != "busy" or time.monotonic() >= deadline:
+                    out["next"] = "Project đã mở nhưng còn đang nạp: gọi get_editor_state sau vài giây."
+                    return compact(out)
+                await asyncio.sleep(0.5)
+            except BridgeError as e:
+                raise ToolError(agent_message(e)) from e
+        out |= {"project": state["project"], "profile": state["profile"], "sequence": state["sequence"],
+                "counts": state["counts"], "revision": state["revision"]}
+        return compact(out)
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,

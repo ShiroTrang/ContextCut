@@ -38,6 +38,9 @@ def agent_message(e: Exception) -> str:
         case "no_project":
             return ("Mở ContextCut trước (app đang chạy nhưng chưa mở project nào: còn ở màn hình chào hoặc hộp "
                     "File Recovery). Nhờ người dùng mở hoặc tạo project rồi gọi lại.")
+        case "busy" if "dialog is open" in e.message or "opening" in e.message:
+            return (f"ContextCut đang bận ({e.message}): app đang hỏi người dùng hoặc đang mở project. Nhờ người dùng "
+                    "trả lời hộp thoại trong app, đợi rồi gọi lại; không gọi dồn.")
         case "busy":
             return "Mở ContextCut trước (project đang nạp hoặc đang đóng). Đợi vài giây rồi gọi lại."
         case "stale_cursor":

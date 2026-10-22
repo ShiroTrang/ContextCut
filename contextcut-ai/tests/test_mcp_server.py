@@ -38,7 +38,7 @@ READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sourc
               "validate_operations", "get_job", "get_transcript", "get_source_frames", "get_contact_sheet",
               "render_frames", "get_viewer_frame"}
 EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job", "transcribe",
-              "add_subtitles"}
+              "add_subtitles", "export", "open_project"}
 
 
 async def test_lists_tools(mcp):
@@ -645,3 +645,121 @@ async def test_viewer_frame_tool(mcp, bridge, tmp_path, code60):
     assert [image_frame_code(img, tmp_path) for img in images] == [77]
     assert (companion / "viewer") in Path(out["path"]).parents
     assert bridge.calls[-1] == ("get_viewer_frame", {"monitor": "active", "at_f": 4321, "width": 320})
+
+
+# --- P2c: export, open_project (Task 23) ---------------------------------------------------------------------------
+
+@pytest.fixture
+def export_jobs(monkeypatch):
+    """jobs.submit/get giả cho tool export: job đã qua bước xác nhận, đang xuất."""
+    from contextcut_ai import jobs
+    calls = []
+
+    def fake_submit(kind, params):
+        calls.append((kind, params))
+        return {"id": "export-1", "kind": kind, "status": "running", "stage": "xuất bằng NVENC: 10/600 frame"}
+
+    monkeypatch.setattr(jobs, "submit", fake_submit)
+    monkeypatch.setattr(jobs, "recent", lambda limit=10: [])
+    return calls
+
+
+async def test_export_rejects_bad_outputs(mcp, bridge, tmp_path, export_jobs):
+    rel = await mcp.call_tool("export", {"output": "Tập 1.mp4"})
+    assert rel.is_error and "tuyệt đối" in text_of(rel)
+    mkv = await mcp.call_tool("export", {"output": str(tmp_path / "Tập 1.mkv")})
+    assert mkv.is_error and ".mp4" in text_of(mkv)
+    sources = copy.deepcopy(bridge.responses["list_sources"])
+    sources["sources"][0]["path"] = (tmp_path / "Ghi hình.mp4").as_posix()
+    bridge.responses["list_sources"] = sources
+    clash = await mcp.call_tool("export", {"output": str(tmp_path / "ghi HÌNH.mp4")})
+    assert clash.is_error and "file nguồn" in text_of(clash)
+    (tmp_path / "cũ.mp4").write_bytes(b"x")
+    exists = await mcp.call_tool("export", {"output": str(tmp_path / "cũ.mp4")})
+    assert exists.is_error and "overwrite" in text_of(exists)
+    outside = await mcp.call_tool("export", {"output": str(tmp_path / "a.mp4"), "start_f": 10, "end_f": 216001})
+    assert outside.is_error and "216000" in text_of(outside)
+    assert export_jobs == [] and "request_confirmation" not in [m for m, _ in bridge.calls]
+
+
+async def test_export_preset_mismatch(mcp, bridge, tmp_path, export_jobs):
+    state = copy.deepcopy(EDITOR_STATE)
+    state["profile"] = {"fps": {"num": 25, "den": 1}, "width": 1280, "height": 720}
+    bridge.responses["get_editor_state"] = state
+    bad = await mcp.call_tool("export", {"output": str(tmp_path / "a.mp4")})
+    assert bad.is_error and "preset" in text_of(bad) and "project" in text_of(bad)
+    bridge.responses["request_confirmation"] = {"confirm_id": "c-9", "state": "pending", "revision": 1}
+    ok = await mcp.call_tool("export", {"output": str(tmp_path / "a.mp4"), "preset": "project"})
+    assert not ok.is_error, text_of(ok)
+
+
+async def test_export_asks_app_then_submits_job(mcp, bridge, tmp_path, export_jobs):
+    bridge.responses["request_confirmation"] = {"confirm_id": "c-7", "state": "pending", "revision": 1873402}
+    out = json.loads(text_of(await mcp.call_tool("export", {"output": str(tmp_path / "Tập 1.mp4"), "start_f": 600,
+                                                            "end_f": 1800, "encoder": "x264"})))
+    assert out["job_id"] == "export-1" and out["status"] == "running" and out["tc"] == ["00:10.00", "00:30.00"]
+    asked = [p for m, p in bridge.calls if m == "request_confirmation"]
+    assert asked == [{"kind": "export", "output": (tmp_path / "Tập 1.mp4").as_posix(), "start_f": 600, "end_f": 1800,
+                      "preset": "youtube-1080p60", "encoder": "x264", "overwrite": False}]
+    kind, params = export_jobs[0]
+    assert kind == "export" and params["confirm_id"] == "c-7" and params["profile"] == EDITOR_STATE["profile"]
+    assert params["sources"] == ["D:/OBS/Ông Sang câu con cá.mkv", "D:/Nhạc/Can Can.mp3"]
+    assert params["project"] == EDITOR_STATE["project"]["path"]
+    assert "đang xuất" in out["next"]
+
+
+def open_status(*states, dialog=None):
+    calls = []
+
+    def answer(params):
+        calls.append(params)
+        state = states[min(len(calls) - 1, len(states) - 1)]
+        return {"request_id": params["request_id"], "state": state, "path": "D:/Videos/Tập 2.kdenlive",
+                "dialog": dialog if state == "pending" else None,
+                "message": "the current project stayed open" if state == "cancelled" else None}
+    return answer, calls
+
+
+async def test_open_project_waits_for_user_then_opened(mcp, bridge):
+    bridge.responses["open_project"] = {"request_id": "o-1", "state": "pending", "path": "D:/Videos/Tập 2.kdenlive",
+                                        "modified": True}
+    save = {"title": "Warning — ContextCut", "text": "The project has been changed. Do you want to save your changes?"}
+    bridge.responses["get_open_status"], calls = open_status("pending", "pending", "opened", dialog=save)
+    out = json.loads(text_of(await mcp.call_tool("open_project", {"path": "D:/Videos/Tập 2.kdenlive"})))
+    assert out["state"] == "opened" and out["previous_project_modified"] is True
+    assert out["project"] == EDITOR_STATE["project"] and out["revision"] == EDITOR_STATE["revision"]
+    assert len(calls) == 3
+
+
+async def test_open_project_pending_reports_dialog_and_resumes(mcp, bridge):
+    bridge.responses["open_project"] = {"request_id": "o-2", "state": "pending", "path": "D:/Videos/Tập 2.kdenlive",
+                                        "modified": True}
+    save = {"title": "Warning — ContextCut", "text": "Do you want to save your changes?"}
+    bridge.responses["get_open_status"], _ = open_status("pending", dialog=save)
+    out = json.loads(text_of(await mcp.call_tool("open_project", {"path": "D:/Videos/Tập 2.kdenlive", "wait_s": 1})))
+    assert out["state"] == "pending" and out["dialog"] == save and "không chọn thay" in out["next"]
+    # gọi lại khi app vẫn đang mở: chờ tiếp đúng lần mở đó
+    bridge.responses["open_project"] = rpc_error(-32005, "busy", "already opening D:/Videos/Tập 2.kdenlive (request o-2)")
+    bridge.responses["get_open_status"], calls = open_status("opened")
+    again = json.loads(text_of(await mcp.call_tool("open_project", {"path": "D:/Videos/Tập 2.kdenlive", "wait_s": 5})))
+    assert again["state"] == "opened" and calls[0]["request_id"] == "o-2"
+
+
+async def test_open_project_cancelled_and_already_open(mcp, bridge):
+    bridge.responses["open_project"] = {"request_id": "o-3", "state": "pending", "path": "D:/Videos/Tập 2.kdenlive",
+                                        "modified": True}
+    bridge.responses["get_open_status"], _ = open_status("cancelled")
+    out = json.loads(text_of(await mcp.call_tool("open_project", {"path": "D:/Videos/Tập 2.kdenlive"})))
+    assert out["state"] == "cancelled" and "stayed open" in out["message"] and "project" not in out
+    bridge.responses["open_project"] = {"request_id": None, "state": "opened", "already_open": True,
+                                        "path": "D:/Videos/Bắt Nạt Hải Sản.kdenlive", "modified": False}
+    calls_before = len(bridge.calls)
+    same = json.loads(text_of(await mcp.call_tool("open_project", {"path": "D:/Videos/Bắt Nạt Hải Sản.kdenlive"})))
+    assert same["state"] == "opened" and same["already_open"] is True
+    assert "get_open_status" not in [m for m, _ in bridge.calls[calls_before:]]
+
+
+async def test_open_project_busy_dialog_message(mcp, bridge):
+    bridge.responses["open_project"] = rpc_error(-32005, "busy", 'a dialog is open in ContextCut ("Project Settings")')
+    out = await mcp.call_tool("open_project", {"path": "D:/Videos/Tập 2.kdenlive"})
+    assert out.is_error and "Project Settings" in text_of(out) and "hộp thoại" in text_of(out)
