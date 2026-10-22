@@ -103,6 +103,7 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `add_markers`, `undo_batch` | Thêm marker; hoàn tác đợt vừa áp dụng | **bây giờ** |
 | `import_media` | Nhập file media (nhạc, SFX, video, ảnh) vào bin | **bây giờ** |
 | `set_track_map` | Sửa sơ đồ track audio của bản ghi (stream nào là Mic, Discord, game) | **bây giờ** |
+| `get_job`, `cancel_job` | Theo dõi / huỷ job nền (phiên âm) | **bây giờ** |
 | `open_project` | Mở project | P2 |
 | `transcribe`, `get_transcript`, `get_context`, `get_job` | Lời thoại theo từ, sự kiện | P2 |
 | `get_contact_sheet`, `get_source_frames`, `render_frames`, `get_viewer_frame` | Xem hình | P2 |

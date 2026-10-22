@@ -15,7 +15,7 @@ from mcp.server.mcpserver.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, guide, paths, trackmap
+from . import __version__, guide, jobs, paths, trackmap
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
 
@@ -41,6 +41,17 @@ OPS_SUMMARY = (
 OpList = Annotated[list[dict[str, Any]], Field(min_length=1, max_length=200,
                                                description='Các op chạy theo thứ tự, vd. [{"type": "split", '
                                                            '"clip_id": 42, "at_f": 300, "reason": "…"}]')]
+
+
+JOB_FIELDS = ("id", "kind", "status", "stage", "progress", "eta_s", "created_at", "started_at", "finished_at", "result",
+              "error")
+
+
+def job_view(job: dict[str, Any]) -> dict[str, Any]:
+    view = {k: job.get(k) for k in JOB_FIELDS}
+    if job.get("status") == "failed":
+        view["log"] = job.get("log")
+    return view
 
 
 def compact(value: Any) -> str:
@@ -225,6 +236,27 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         except (ValueError, OSError) as e:
             raise ToolError(str(e)) from e
         return compact({"recording": recording, "track_map": updated["track_map"]})
+
+    @read_tool
+    async def get_job(
+        job_id: Annotated[str | None, Field(description="job_id do transcribe… trả; bỏ trống để xem các job gần đây")] = None,
+    ) -> str:
+        """Theo dõi job nền (phiên âm…): status queued | running | done | failed | cancelled, stage (đang làm gì),
+        progress 0…1, eta_s, result khi xong, error khi lỗi. Job dài vài phút: hỏi lại thưa (30–60 s), đừng gọi dồn."""
+        try:
+            if job_id:
+                return compact(job_view(jobs.get(job_id)))
+            return compact({"jobs": [job_view(j) for j in jobs.recent()]})
+        except KeyError as e:
+            raise ToolError(f"Không có job {job_id!r} (xem get_job không tham số).") from e
+
+    @tool(PROJECT_DATA)
+    async def cancel_job(job_id: Annotated[str, Field(min_length=1, description="job_id cần huỷ")]) -> str:
+        """Huỷ job nền: job đang chờ thì huỷ ngay, đang chạy thì dừng ở mốc kế tiếp (phần đã xong vẫn giữ để chạy tiếp)."""
+        try:
+            return compact(job_view(jobs.cancel(job_id)))
+        except KeyError as e:
+            raise ToolError(f"Không có job {job_id!r}.") from e
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,

@@ -31,8 +31,8 @@ def text_of(result) -> str:
 
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
-              "validate_operations"}
-EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map"}
+              "validate_operations", "get_job"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map", "cancel_job"}
 
 
 async def test_lists_tools(mcp):
@@ -258,3 +258,17 @@ async def test_set_track_map_unsaved_project(mcp, bridge):
     bridge.responses["get_editor_state"] = state
     result = await mcp.call_tool("set_track_map", {"recording": "4", "tracks": [{"index": 1, "role": "mix"}]})
     assert result.is_error and "Lưu project trước" in text_of(result)
+
+
+async def test_get_job_and_cancel_job_tools(mcp, tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTEXTCUT_DATA_DIR", str(tmp_path / "data"))
+    from contextcut_ai import jobs
+    job = jobs.submit("sleep", {"seconds": 30})
+    out = json.loads(text_of(await mcp.call_tool("get_job", {"job_id": job["id"]})))
+    assert out["id"] == job["id"] and out["status"] in {"queued", "running"}
+    listing = json.loads(text_of(await mcp.call_tool("get_job", {})))
+    assert [j["id"] for j in listing["jobs"]] == [job["id"]]
+    out = json.loads(text_of(await mcp.call_tool("cancel_job", {"job_id": job["id"]})))
+    assert out["status"] in {"queued", "running", "cancelled"}
+    missing = await mcp.call_tool("get_job", {"job_id": "khong-co"})
+    assert missing.is_error and "khong-co" in text_of(missing)
