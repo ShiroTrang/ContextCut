@@ -11,6 +11,21 @@ dependencies = [
     "pydantic>=2.12,<3",
 ]
 
+[project.optional-dependencies]
+# Phân tích chạy trong worker (P2a). GPU: cuBLAS/cuDNN của NVIDIA từ PyPI; không có GPU thì CTranslate2 chạy CPU int8.
+analysis = [
+    "faster-whisper>=1.2.1,<2",
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
+    "nvidia-ml-py>=12",
+]
+# Ứng viên ASR thứ ba (nvidia/parakeet-ctc-0.6b-Vietnamese): NeMo + PyTorch CUDA, nặng (~4 GB), cài riêng khi cần.
+parakeet = [
+    "nemo_toolkit[asr]>=2.6,<2.7",
+    "torch==2.9.1",
+    "nvidia-ml-py>=12",
+]
+
 [project.scripts]
 contextcut-ai = "contextcut_ai.mcp_server:main"
 
@@ -24,3 +39,15 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: cần ContextCut đang chạy (bridge.json); tự bỏ qua khi không có"]
+
+[tool.uv]
+# Công cụ chỉ cho Windows (design §3): lock không cần giải cho macOS/Linux
+environments = ["sys_platform == 'win32'"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu126" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
