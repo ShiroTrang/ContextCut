@@ -362,7 +362,7 @@ Tham số: `originals` (bool, mặc định `true`). Không có project → `no_
 
 - `xml` là XML MLT của **sequence đang mở** đúng như Kdenlive dựng khi xuất (`ProjectManager::projectSceneList(<thư mục project>)`): mọi track, hiệu ứng, title, track phụ đề (filter trỏ tới file `.ass` tạm của app), chưa cần lưu project. `melt` đọc được trực tiếp (`melt scene.mlt in=N out=N …`).
 - `originals: true` và project dùng proxy (`proxies: true`) → đường dẫn proxy được thay bằng file gốc (`KdenliveDoc::useOriginals`, như xuất không chọn "dùng proxy"); `false` giữ proxy (nhanh hơn, ảnh mờ hơn).
-- `root` là thư mục gốc cho đường dẫn tương đối trong XML (thư mục project; project chưa lưu thì là chuỗi app đặt, đường dẫn trong XML khi đó là tuyệt đối hoặc theo `root`).
+- `root` là thuộc tính `root` của XML: thư mục gốc cho đường dẫn tương đối (thư mục project); `null` khi XML không có. Đường dẫn ghi tương đối theo `root` hoặc tuyệt đối; `melt` tự giải.
 - Chỉ đọc, không đổi timeline, không ghi file.
 
 ### 8.11 `get_viewer_frame` [P2b]

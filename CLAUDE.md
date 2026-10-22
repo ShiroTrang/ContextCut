@@ -67,6 +67,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - `-i` với một mục rỗng (`",a.mkv"`) nhập **cả thư mục hiện tại, đệ quy**. PowerShell 5.1 đọc `.ps1` UTF-8 không BOM như ANSI: đừng để tên có dấu trong script.
 - Chạy bản sao `stage` ở thư mục khác thì nó ghi `mltpath` của nó vào `contextcutrc`; sửa lại về `…/contextcut/stage/share/mlt/profiles`.
 - Clip bin đang nạp (`StatusWaiting`, tốt hay hỏng đều vậy) bị Kdenlive khoá ghi producer trên luồng giao diện tới khi nạp xong: cầu nối gọi `frameDuration()`, `getFrameSize()`, `getOriginalFps()`, `getProducerIntProperty()`… trên clip đó là app treo vĩnh viễn. Kiểm `clipStatus() != StatusWaiting` hoặc `statusReady()` trước (`stillLoading` trong `editorreader.cpp`; `patches.md`, `docs/handoff/P2a.md`).
+- melt dựng scene Kdenlive (`get_scene`, `.kdenlive`) với consumer có `width`/`height`: thiếu `progressive=1` thì crash, có thì vẫn chừa viền đen 16 px mỗi bên khi nguồn lớn hơn profile (transition `qtblend`). Dựng ở cỡ profile rồi thu nhỏ (`render.py`). argv của melt không giữ chữ có dấu: chạy với `cwd` = thư mục làm việc, đường dẫn có dấu để trong XML.
+- Xem hình (P2b): `uv run --directory contextcut-ai --no-sync pytest -m live tests/test_live_vision.py tests/test_live_zoom.py` trên `p1-gate` (nhập video mã số frame rồi hoàn tác). `p1-gate` bật proxy: nhập file ≥ 1000 px làm Kdenlive thêm bước "Add proxy clip", đợt `import_media` trước đó không `undo_batch` được nữa.
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -77,7 +79,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
 | P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | **Xong** 22/10/2026: P1a cầu nối C++ (`docs/handoff/P1a.md`), P1b MCP server + guide (`docs/handoff/P1b.md`), P1c op sửa timeline, một bước undo mỗi đợt, cổng P1 qua với Claude Code (`docs/handoff/P1c.md`, có tóm tắt P1) |
-| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | **Đang làm**: P2a phiên âm + phụ đề xong (agent chạy trọn transcribe → phụ đề, lưu/mở lại được), cổng đo timing chờ bản ghi OBS + mốc tay của Nhan (`docs/handoff/P2a.md`, `docs/plans/P2.md`); P2b vision, P2c xuất chưa |
+| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | **Đang làm**: P2a phiên âm + phụ đề xong (agent chạy trọn transcribe → phụ đề, lưu/mở lại được), cổng đo timing chờ bản ghi OBS + mốc tay của Nhan (`docs/handoff/P2a.md`, `docs/plans/P2.md`); **P2b xong** 22/10: xem hình (`get_source_frames`, `get_contact_sheet`, `render_frames`, `get_viewer_frame`), op `zoom`, agent tự xem → zoom → tự kiểm (`docs/handoff/P2b.md`); P2c xuất chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
 | P5 | Giao diện Dễ, dock Hoạt động AI, zip portable, logo | Chưa |
