@@ -18,7 +18,7 @@ Lỗi nặng nhất là **video thiếu tự nhiên**: chuyển cảnh hay chuy�
    - giữa một phản ứng (tràng cười, tiếng la hét);
    - tạo ra shot ngắn hơn **1,5 giây** (ngưỡng khởi đầu, sẽ chỉnh sau khi Nhan chấm).
 
-   Được vượt, nhưng phải ghi lý do (ví dụ montage theo beat cố ý dùng shot ngắn). Từ P2–P4, validator trong app chặn các trường hợp này dựa trên transcript.
+   Được vượt, nhưng phải ghi lý do (ví dụ montage theo beat cố ý dùng shot ngắn). Validator trong app chưa chặn (P3–P4); đến lúc đó tự kiểm bằng `get_transcript(words=true)` quanh mỗi điểm cắt.
 
 ## Nội dung
 

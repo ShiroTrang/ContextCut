@@ -12,19 +12,33 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 | # | Bước | Việc | Tool | Có từ |
 | --- | --- | --- | --- | --- |
 | 1 | Nắm project | Project, fps, track, bản ghi, playhead, vùng chọn, marker người dùng đặt | `get_editor_state`, `list_recordings`, `get_timeline` | **bây giờ** |
-| 2 | Phân tích | Lời thoại theo từ (track Mic, Discord), phản ứng, khoảng lặng, sự kiện game | `transcribe`, `get_transcript`, `find_moments` | P2–P3 |
+| 2 | Phân tích | Lời thoại theo từ (track Mic, Discord); phản ứng, khoảng lặng, sự kiện game (P3) | `transcribe`, `get_job`, `get_transcript`; `find_moments` (P3) | **bây giờ** (lời thoại) |
 | 3 | Dàn ý | Danh sách đoạn: vai trò (hook, bối cảnh, thân, cao trào, "trong lúc đó", kết), khoảng thời gian trên bản ghi, POV, lý do một câu, kiểu dựng (thường, montage theo beat, cú cắt mỉa…), trạng thái | `get_outline`, `save_outline` | P3; trước đó viết dàn ý trong chat |
 | 4 | Duyệt | Người dùng đọc, sửa, duyệt dàn ý. Đoạn chưa duyệt thì chưa dựng | — | |
 | 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `list_operations`, `validate_operations`, `apply_operations` | **bây giờ** |
-| 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | P2 |
-| 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2 |
+| 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | P2b |
+| 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2c |
 
 ## Bản hiện tại làm được gì
 
 - Đọc project đang mở: track, clip, composition, marker (guide), các bản ghi, mọi clip trong bin.
 - Trả lời câu hỏi về project ("timeline có gì", "bản ghi nào chưa dùng", "phút 12 là clip nào") bằng số liệu thật từ tool.
-- Đề xuất dàn ý **bằng chữ**. Chưa có transcript và hình, nên dàn ý chỉ dựa vào tên file, độ dài, marker, và lời người dùng kể. Nói rõ giới hạn đó.
-- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt, marker. Chưa có: zoom, hiệu ứng, phụ đề tự động, xem hình (P2 trở đi).
+- **Nghe lời thoại**: phiên âm theo từng từ track Mic (Nhan) và Discord (bạn bè), đọc theo khoảng trên timeline hoặc bản ghi gốc.
+- Đề xuất dàn ý **bằng chữ**, dựa trên transcript, tên file, độ dài, marker và lời người dùng kể. Chưa xem được hình: chuyện chỉ thấy trên màn hình (chết, đánh nhau) thì nói rõ là đoán từ lời thoại.
+- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker. Chưa có: zoom, hiệu ứng, xem hình (P2b trở đi).
+
+## Nghe trước khi dựng
+
+1. `list_recordings`: bản ghi nào, có `track_map` chưa (stream nào là Mic, Discord). Sơ đồ đoán sai (người dùng bảo) thì `set_track_map`.
+2. `transcribe(recording)`: trả `job_id` (hoặc `cached: true` nếu đã có). Buổi quay dài mất vài phút đến vài chục phút: báo người dùng, hỏi `get_job(job_id)` thưa (30–60 s một lần), trong lúc đó làm việc khác được.
+3. Tool báo thiếu model hay thư viện kèm **dung lượng**: hỏi người dùng có đồng ý tải không, đồng ý mới gọi lại với `allow_download: true`. Không tự tải.
+4. Xong thì `get_transcript` theo khoảng (`start_f`, `end_f`), `track` khi chỉ cần một người; `words: true` khi cần mốc từng từ (câu đắt). Đọc từng khoảng, đừng kéo cả buổi 2 giờ một lần.
+5. Dàn ý và mốc cắt dựa vào lời thật: không cắt giữa câu, giữa tràng cười (xem `editing-rules`).
+
+## Phụ đề
+
+- Phụ đề đầy đủ: `add_subtitles(start_f?, end_f?)` sau khi đã dựng xong đoạn; `preview: true` để đọc thử trước. Một bước undo.
+- Câu đắt: op `caption` có `speaker`, mốc từ `get_transcript(words=true)`; style theo người nói tự điền. Xem `get_guide("patterns/subtitles")`.
 
 ## Một lần sửa
 
@@ -48,7 +62,8 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 - Dùng nhạc, SFX, meme ngoài thư viện, hoặc không rõ giấy phép.
 - Thêm POV bạn bè (mặc định chỉ dùng POV người quay).
 - Xuất file.
-- Không chắc chuyện gì xảy ra ở một đoạn (chưa nghe, chưa xem được).
+- Tải model hoặc thư viện (tool báo dung lượng).
+- Không chắc chuyện gì xảy ra ở một đoạn (chưa nghe, chưa xem được), hoặc transcript có từ `low_conf` ở chỗ quan trọng.
 
 ## Chế độ Duyệt và Tự động
 

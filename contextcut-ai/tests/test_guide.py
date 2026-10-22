@@ -3,7 +3,7 @@
 from contextcut_ai import guide
 
 EXPECTED = ["workflow", "editing-rules", "software", "styles/gaming", "patterns/irony-cut", "patterns/meanwhile",
-            "patterns/beat-montage", "patterns/reaction-zoom"]
+            "patterns/beat-montage", "patterns/reaction-zoom", "patterns/subtitles"]
 
 
 def test_expected_topics():
@@ -61,3 +61,16 @@ def test_guide_dir_env_override(tmp_path, monkeypatch):
     [topic] = guide.load_topics()
     assert (topic.name, topic.title, topic.summary, topic.body) == ("x", "X", "s", "# X\nthân\n")
     assert guide.instructions() == "Ngắn."
+
+
+def test_guide_covers_transcripts_and_subtitles():
+    instructions = guide.instructions()
+    for phrase in ["get_transcript", "add_subtitles"]:
+        assert phrase in instructions, phrase
+    assert "Chưa nghe lời thoại" not in instructions
+    workflow = guide.find_topic("workflow").body
+    for phrase in ["transcribe", "get_job", "get_transcript", "add_subtitles", "dung lượng"]:
+        assert phrase in workflow, phrase
+    software = guide.find_topic("software").body
+    for phrase in ["track_map", "clear_subtitles", "uppercase", "speakers.json", "Lưu project trước", "on=\"source\""]:
+        assert phrase in software, phrase

@@ -1,6 +1,6 @@
 ---
 title: Cách dùng phần mềm
-summary: Frame, khoảng nửa mở, fps, id, track và tag, bản ghi và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột), phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
+summary: Frame, khoảng nửa mở, fps, id, track và tag, bản ghi, track_map và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột, phụ đề), lời thoại (transcript, job), phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
 order: 3
 ---
 # ContextCut qua MCP
@@ -32,7 +32,8 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 
 - Bản ghi là video nguồn, thường là file OBS `.mkv` nhiều track audio. Một project có thể có nhiều bản ghi (OBS chia file, ghép nhiều buổi).
 - Sơ đồ OBS khuyến nghị: track 1 trộn chung (Discord + Game + Mic), 2 Mic của người quay, 3 Discord (giọng bạn bè), 4 âm thanh game, 5 Desktop Audio dự phòng.
-- `audio_streams[].index` là chỉ số stream MLT (đếm cả stream hình), nên OBS track 1 thường là `index: 1`. `name` là mô tả Kdenlive (`Stereo 48kHz aac`), chưa phải tên track OBS. `track_map` (P2) sẽ ghi track nào là Mic, Discord, Game.
+- `audio_streams[].index` là chỉ số stream MLT (đếm cả stream hình), nên OBS track 1 thường là `index: 1`. `name` là mô tả Kdenlive (`Stereo 48kHz aac`), chưa phải tên track OBS.
+- `track_map` ghi stream nào là gì: `[{index, obs_track, title, role, speaker, transcribe}]`, `role` ∈ `mix | mic | discord | game | desktop | other`. ContextCut đoán theo tên stream OBS (Mic, Discord…) rồi theo thứ tự trên; file chỉ có một track audio → `mix`, phiên âm track đó, `speaker: null`. `null` tới lần `transcribe`/`set_track_map` đầu. Sửa bằng `set_track_map(recording, tracks)`; chỉ track `transcribe: true` được phiên âm.
 - `on_timeline`: bản ghi đã có clip trên timeline chưa. `ready: false`: Kdenlive chưa nạp xong clip.
 - `list_sources` liệt kê **mọi** clip trong bin (bản ghi, nhạc, SFX, ảnh, title): `id` là `source` của `insert_clip`/`add_music`. File chưa có trong bin: `import_media(path)` với đường dẫn tuyệt đối người dùng đưa (chỉ file media, không qua symlink); kiểm `list_sources` trước để khỏi nhập trùng.
 
@@ -53,19 +54,29 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 
 | Op | Tham số | Việc |
 | --- | --- | --- |
-| `cut_range` | `start_f`, `end_f` | Cắt bỏ khoảng trên mọi track không khoá, kéo phần sau lên (ripple); marker sau khoảng dời theo. Track khoá thì lệch đồng bộ (có cảnh báo) |
+| `cut_range` | `start_f`, `end_f` | Cắt bỏ khoảng trên mọi track không khoá, kéo phần sau lên (ripple); marker và phụ đề sau khoảng dời theo, phụ đề trong khoảng bị xoá, cắt ngang thì thu lại. Track khoá thì lệch đồng bộ (có cảnh báo) |
 | `split` | `clip_id`, `at_f` | Cắt clip (cả clip cặp `linked`) làm đôi; `created` = nửa sau |
 | `trim` | `clip_id`, `start_f?`, `end_f?` | Đặt mép mới trên timeline; điểm vào nguồn dời theo mép trái |
 | `move` | `clip_id`, `at_f`, `track?` | Dời clip (cả clip cặp) tới `at_f`; chỗ đích phải trống |
 | `insert_clip` | `source`, `in_f`, `out_f`, `track`, `at_f`, `audio_track?`, `audio_stream?`, `audio?` | Đặt khoảng nguồn `[in_f, out_f)` vào chỗ trống. Track video: hình lên `track`, tiếng xuống `audio_track` (mặc định track audio đối xứng), stream `audio_stream` (chỉ số như `list_recordings`, mặc định stream mặc định); track audio: chỉ tiếng |
 | `add_music` | `source`, `at_f`, `in_f?`, `out_f?`, `track?`, `gain_db?` | Phần tiếng của nguồn lên track `Nhạc`/`Music` (hoặc `track`), `gain_db` -60…20 |
 | `title_card` | `text`, `start_f`, `end_f`, `track?`, `style?` | Thẻ chữ toàn màn hình (`black` nền đen, `dim` nền mờ), vd. "Trong lúc đó:" |
-| `caption` | `text`, `start_f`, `end_f`, `speaker?`, `track?`, `style?` | Câu đắt chữ viền đen (`bottom`, `top`) hoặc vàng to (`pop`) |
+| `caption` | `text`, `start_f`, `end_f`, `speaker?`, `track?`, `style?`, `color?`, `uppercase?`, `label?` | Câu đắt chữ viền đen (`bottom`, `top`) hoặc vàng to (`pop`); `color` `#RRGGBB`, `uppercase` in hoa, `label` thêm "<speaker>: ". Có `speaker` mà bỏ trống ba trường kia thì MCP server điền theo người nói (`speakers.json`) và bắt mép về đầu/cuối từ (`snap: false` để tắt) |
+| `add_subtitles` | `items` (`[{start_f, end_f, text, speaker?}]`, tối đa 5000), `layer?` | Thêm dòng vào track phụ đề (tạo nếu chưa có); các dòng không chồng nhau và không chồng phụ đề có sẵn. Thường dùng tool `add_subtitles` thay vì tự soạn |
+| `clear_subtitles` | `start_f`, `end_f`, `layer?` | Xoá phụ đề bắt đầu trong khoảng; đặt trước `add_subtitles` cùng đợt để thay một đoạn |
 
 - Track nhận id, tag (`V2`) hoặc tên track. Chữ mặc định lên track tên `Chữ`/`Text`/`Title`, không có thì track video trên cùng (có cảnh báo).
 - Chèn và dời chỉ vào chỗ trống: cần chỗ thì `cut_range`/`move` trước, trong cùng đợt.
 - `add_markers(markers, base_revision)` thêm marker (`f`, `comment`, `category`) để chỉ chỗ cho người dùng xem: một bước undo riêng.
 
+
+## Lời thoại (transcript)
+
+- `transcribe(recording, tracks?, language="vi", model?, prompt?)` phiên âm theo từng từ các track `transcribe: true` của `track_map` (Mic = Nhan, Discord = "bạn bè"). Chạy nền trong worker riêng: trả `job_id`; `get_job(job_id)` cho `status` (`queued` khi đang chờ GPU vì job khác chạy, `running`, `done`, `failed`, `cancelled`), `stage`, `progress`, `eta_s`. Client đóng giữa chừng thì job vẫn chạy; job hỏng thì gọi lại `transcribe`, phần đã xong được giữ.
+- Kết quả lưu ở `<project>.contextcut/analysis/<hash file>/transcript.json` theo **giây trên bản ghi gốc**; gọi lại với cùng model trả `cached: true` ngay. `force: true` để phiên âm lại. `prompt` là tên riêng/thuật ngữ để nghe đúng chính tả ("Minecraft, creeper, Sang").
+- Model: `parakeet-ctc-vi`, `phowhisper-large`, `large-v3` (mặc định chọn theo số đo, cái nào có trên máy). Máy không có GPU NVIDIA vẫn chạy được (CPU, chậm hơn).
+- `get_transcript(recording?, start_f?, end_f?, track?, on, words?, limit, cursor)`: câu `{recording, track, speaker, start_f, end_f, tc, text}`; `tc` là `mm:ss.ff`. Mặc định `on="timeline"`: frame trên timeline đang mở, chỉ lời của đoạn bản ghi đang hiện (đoạn đã cắt không có; câu bị cắt dở có `partial: true`). `on="source"`: frame trên bản ghi gốc (để viết dàn ý theo bản ghi). `low_conf`: từ máy nghe chưa chắc. `words: true`: kèm từng từ `{w, start_f, end_f, p}`.
+- Câu "ảo giác" quen của Whisper trên đoạn im lặng ("Hãy subscribe cho kênh…") đã bị lọc; vẫn có thể sai chữ: không trích nguyên văn một câu `low_conf` làm câu đắt khi chưa hỏi.
 
 ## Phân trang
 
@@ -88,6 +99,9 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | "có thể đã được áp dụng" | Kết nối rớt sau khi gửi lệnh sửa | Xem `get_editor_state` (`undo.next_undo`) trước khi gửi lại, tránh áp dụng hai lần |
 | Tham số sai | Sai kiểu hoặc ngoài khoảng | Sửa tham số |
 | Không có `…` | Track hay clip không tồn tại | Xem lại `get_editor_state` |
+| "Lưu project trước (Ctrl+S)…" | Project chưa lưu lần nào nên chưa có thư mục `.contextcut` để lưu transcript | Nhờ người dùng lưu project rồi gọi lại |
+| "Chưa có transcript…" | Bản ghi chưa phiên âm, hoặc job chưa xong | `transcribe`, đợi `get_job` xong |
+| "Chưa có model … (… GB)" / "Chưa cài thư viện phân tích…" | Thiếu model hoặc thư viện trên máy | Báo dung lượng, hỏi người dùng; đồng ý thì `allow_download: true` (model) hoặc người dùng chạy lệnh cài thư viện |
 
 ## Tool
 
@@ -107,10 +121,10 @@ ContextCut là Kdenlive 26.08.2 sửa nhẹ, thêm cầu nối cho AI. Timeline 
 | `transcribe` | Phiên âm theo từ track Mic/Discord của bản ghi (job nền) | **bây giờ** |
 | `get_transcript` | Lời thoại theo câu/từ, người nói, frame timeline hoặc nguồn; phân trang | **bây giờ** |
 | `add_subtitles` | Phụ đề đầy đủ từ transcript vào track phụ đề Kdenlive (một bước undo; `preview` xem trước) | **bây giờ** |
-| `open_project` | Mở project | P2 |
-| `transcribe`, `get_transcript`, `get_context`, `get_job` | Lời thoại theo từ, sự kiện | P2 |
-| `get_contact_sheet`, `get_source_frames`, `render_frames`, `get_viewer_frame` | Xem hình | P2 |
-| `export`, `zoom` | Xuất file; zoom phản ứng | P2 |
+| `open_project` | Mở project | P2c |
+| `get_contact_sheet`, `get_source_frames`, `render_frames`, `get_viewer_frame`, `zoom` | Xem hình; zoom phản ứng | P2b |
+| `export` | Xuất file YouTube 1080p60 | P2c |
+| `get_context` | Lời thoại + sự kiện gộp theo thời gian | P3 |
 | `find_moments`, `detect_beats`, `beat_montage`, `get_outline`, `save_outline`, `list_assets` | Khoảnh khắc, beat, dàn ý, thư viện nhạc/SFX/meme | P3 |
 | `register_pov`, `sync_pov`, `pov_placeholder`, `pov_switch` | Nhiều POV | P4 |
 

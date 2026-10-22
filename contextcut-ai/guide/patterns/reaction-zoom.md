@@ -5,7 +5,7 @@ order: 23
 ---
 # Zoom phản ứng thay facecam
 
-Trạng thái: khung (guide v0). Cần `zoom`, `render_frames` (P2) và `find_moments` (P3); trước đó chỉ đề xuất bằng chữ.
+Trạng thái: khung (guide v0). Cần `zoom`, `render_frames` (P2b) và `find_moments` (P3); trước đó chỉ đề xuất bằng chữ (phản ứng tìm được bằng lời thoại trong transcript).
 
 ## Khi dùng
 
@@ -26,4 +26,4 @@ Người chơi la, cười to, hoặc nói câu đắt khi có chuyện bất ng
 
 ## Tool cần
 
-`zoom`, `render_frames` (P2), `find_moments` (P3), `caption` (P1c).
+`zoom`, `render_frames` (P2b), `find_moments` (P3), `get_transcript` (P2a), `caption` (P1c).

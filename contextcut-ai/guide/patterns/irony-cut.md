@@ -5,7 +5,7 @@ order: 20
 ---
 # Cú cắt mỉa
 
-Trạng thái: khung (guide v0). Dựng được khi có transcript (P2), `find_moments` và `beat_montage` (P3); trước đó chỉ đề xuất bằng chữ.
+Trạng thái: khung (guide v0). Đã có transcript (P2a) để chọn câu tự tin và cắt đúng cuối câu; `find_moments` và `beat_montage` (P3) chưa có, nên đoạn montage chết dựng tay bằng `insert_clip` theo mốc người dùng chỉ.
 
 ## Khi dùng
 
@@ -26,4 +26,4 @@ Ai đó nói một câu tự tin ("modpack này chưa gì thấy ok rồi đó")
 
 ## Tool cần
 
-`get_transcript` (P2), `find_moments`, `detect_beats`, `beat_montage` (P3), `title_card`, `insert_clip`, `add_music` (P1c).
+`get_transcript` (P2a), `find_moments`, `detect_beats`, `beat_montage` (P3), `title_card`, `insert_clip`, `add_music` (P1c).
