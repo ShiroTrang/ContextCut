@@ -8,6 +8,7 @@ import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 from .paths import find_tool
@@ -27,10 +28,27 @@ class AudioStream:
 
 
 @dataclass(frozen=True)
+class VideoInfo:
+    index: int
+    fps: Fraction
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
 class Probe:
     duration_s: float
     has_video: bool
     streams: list[AudioStream]
+    video: VideoInfo | None = None
+
+
+def _rate(text: str | None) -> Fraction | None:
+    try:
+        rate = Fraction(text or "")
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
 
 
 def probe(path: str | Path) -> Probe:
@@ -45,9 +63,17 @@ def probe(path: str | Path) -> Probe:
         audio.append(AudioStream(index=int(s["index"]), title=tags.get("title") or tags.get("handler_name"),
                                  channels=int(s.get("channels") or 0), sample_rate=int(s.get("sample_rate") or 0),
                                  codec=s.get("codec_name") or ""))
-    has_video = any(s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")
-                    for s in info.get("streams", []))
-    return Probe(duration_s=float((info.get("format") or {}).get("duration") or 0), has_video=has_video, streams=audio)
+    pictures = [s for s in info.get("streams", [])
+                if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")]
+    video = None
+    if pictures:
+        v = pictures[0]
+        # avg_frame_rate là fps thật của bản ghi CFR; r_frame_rate khi avg trống (một số MKV)
+        fps = _rate(v.get("avg_frame_rate")) or _rate(v.get("r_frame_rate"))
+        if fps:
+            video = VideoInfo(index=int(v["index"]), fps=fps, width=int(v.get("width") or 0), height=int(v.get("height") or 0))
+    return Probe(duration_s=float((info.get("format") or {}).get("duration") or 0), has_video=bool(pictures),
+                 streams=audio, video=video)
 
 
 def fast_hash(path: str | Path) -> str:
