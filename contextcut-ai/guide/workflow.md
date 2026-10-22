@@ -17,7 +17,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 | 4 | Duyệt | Người dùng đọc, sửa, duyệt dàn ý. Đoạn chưa duyệt thì chưa dựng | — | |
 | 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `list_operations`, `validate_operations`, `apply_operations` | **bây giờ** |
 | 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, zoom đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | **bây giờ** |
-| 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2c |
+| 7 | Xuất | Chỉ khi người dùng bảo; hỏi tên và chỗ lưu file; app hỏi người dùng xác nhận | `export`, `get_job` | **bây giờ** |
 
 ## Bản hiện tại làm được gì
 
@@ -25,7 +25,8 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 - Trả lời câu hỏi về project ("timeline có gì", "bản ghi nào chưa dùng", "phút 12 là clip nào") bằng số liệu thật từ tool.
 - **Nghe lời thoại**: phiên âm theo từng từ track Mic (Nhan) và Discord (bạn bè), đọc theo khoảng trên timeline hoặc bản ghi gốc.
 - **Xem hình**: lướt bản ghi bằng contact sheet, xem frame gốc ở mốc cụ thể, xem timeline đã dựng (như file xuất) để tự kiểm, xem khung người dùng đang nhìn. Đề xuất dàn ý dựa trên transcript, hình đã xem, marker và lời người dùng kể; chỗ chưa xem thì nói rõ là đoán.
-- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker, **zoom** vào gameplay. Chưa có: hiệu ứng khác (P6), xuất file (P2c).
+- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker, **zoom** vào gameplay. Chưa có: hiệu ứng khác (P6).
+- **Xuất** MP4 (YouTube 1080p60 hoặc theo project) sau khi người dùng bấm "Xuất" trong app; **mở** project `.kdenlive` khác.
 
 ## Nghe trước khi dựng
 
@@ -49,6 +50,19 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 3. Sau khi sửa: `render_frames(frames)` ở chỗ vừa sửa (đầu, giữa, cuối đoạn): đúng như file xuất (cắt, zoom, chữ, phụ đề). Sai thì sửa tiếp hoặc `undo_batch`, rồi kiểm lại.
 4. Người dùng nói "chỗ này": `get_viewer_frame()` là khung họ đang xem; `at_f` dời playhead tới mốc mình muốn chỉ cho họ thấy.
 5. Client không hiện ảnh: mỗi ảnh có đường dẫn file trong phần chữ, mở file đó (vd. tool đọc file của client).
+
+## Xuất
+
+1. Chỉ xuất khi người dùng bảo. Hỏi tên file và chỗ lưu nếu họ chưa nói (đường dẫn tuyệt đối `.mp4`, không trùng file nguồn), cả timeline hay một đoạn.
+2. Preset `youtube-1080p60` khi project là 1920×1080 60 fps (như bản ghi OBS khuyến nghị); project khác cỡ/fps thì `project`, hoặc nhờ người dùng đổi Project Settings. Tool báo rõ khi không khớp.
+3. `export(output, start_f?, end_f?)`: ContextCut hiện hộp "AI muốn xuất video" cho người dùng. **Chỉ người dùng bấm "Xuất"**: agent không bấm thay, không điều khiển giao diện, không xuất bằng đường khác (melt, ffmpeg) để lách. Báo người dùng nhìn sang app.
+4. `get_job(job_id, wait_s=50)` tới khi `done`. Đoạn dài xuất mất vài phút (NVENC nhanh hơn thời gian thực nhiều lần; x264 chậm hơn).
+5. Báo: file, thời lượng, dung lượng, bộ mã hoá (`fallback_reason` khi NVENC hỏng phải dùng x264), `ok` và các `checks` hỏng nếu có. `cancelled` là người dùng không đồng ý (hoặc huỷ): không hỏi lại trừ khi họ bảo.
+6. File đã có: chỉ `overwrite: true` khi người dùng đồng ý ghi đè (hộp xác nhận ghi rõ "GHI ĐÈ").
+
+## Mở project khác
+
+`open_project(path)` mở file `.kdenlive` người dùng chỉ. Project đang mở có thay đổi chưa lưu thì app hỏi người dùng Save / Don't Save / Cancel: báo họ trả lời trong app, đừng chọn thay. Kết quả `pending` (kèm `dialog` app đang hỏi): gọi lại `open_project` cùng path để chờ tiếp; `cancelled`: project cũ còn nguyên. Sau khi mở, mọi id clip, track, `batch_id` cũ hết giá trị: đọc lại `get_editor_state`.
 
 ## Một lần sửa
 

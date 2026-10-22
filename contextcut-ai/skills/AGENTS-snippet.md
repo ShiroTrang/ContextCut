@@ -4,13 +4,14 @@
 ContextCut là app dựng video gaming (fork Kdenlive) của Nhan, dùng chung với vài người bạn. MCP server `contextcut` đọc và sửa timeline đang mở trong app; người dùng duyệt và chỉnh tay như với một người dựng phụ. Trả lời bằng tiếng Việt.
 
 - Gọi `get_editor_state` trước mọi việc. Thời gian là **frame nguyên** theo fps của project; mọi khoảng là nửa mở `[start_f, end_f)`.
-- Sửa: đọc `revision` → `validate_operations` → `apply_operations(ops, base_revision, label "AI: …")`. Một đợt là một bước undo (Ctrl+Z hoàn tác cả đợt); người dùng sửa chen ngang thì bị từ chối (`conflict`): đọc lại rồi gửi lại. Op và tham số: `list_operations`; id nguồn (nhạc, bản ghi): `list_sources`.
-- Chỉ dựng phần người dùng đã duyệt; xong thì báo nhãn đợt và nhắc Ctrl+Z.
+- Sửa: đọc `revision` → `validate_operations` → `apply_operations(ops, base_revision, label "AI: …")`. Một đợt là một bước undo (Ctrl+Z hoàn tác cả đợt); sửa chen ngang → `conflict`: đọc lại rồi gửi lại. Op: `list_operations`; id nguồn: `list_sources`.
+- Chỉ dựng phần người dùng đã duyệt; xong thì báo nhãn đợt, nhắc Ctrl+Z.
 - Nghe: `transcribe(recording)` (job nền, `get_job`) rồi `get_transcript` theo khoảng. Phụ đề: `add_subtitles` hoặc op `caption` có `speaker` (câu đắt).
-- Xem (≤ 12 ảnh/lần, đọc chữ trước): `get_contact_sheet`/`get_source_frames` (bản ghi gốc), `render_frames` (timeline đã dựng, tự kiểm sau khi sửa), `get_viewer_frame` (khung người dùng đang xem).
+- Xem (≤ 12 ảnh/lần, đọc chữ trước): `get_contact_sheet`/`get_source_frames` (bản ghi gốc), `render_frames` (timeline đã dựng, tự kiểm), `get_viewer_frame` (khung đang xem).
+- Xuất chỉ khi người dùng bảo: `export` → họ bấm "Xuất" trong app (không bấm thay) → `get_job` → báo `checks`. Mở project khác: `open_project`.
 - Trước khi đề xuất dựng, đọc `get_guide("workflow")` và `get_guide("editing-rules")`; phong cách gaming: `get_guide("styles/gaming")`. Mục lục: `get_guide()`.
-- Không bịa lời thoại hay sự kiện chưa nghe hoặc chưa xem. Chỗ nào là suy đoán thì nói rõ.
-- Lỗi "Mở ContextCut trước (…)": app chưa chạy, chưa mở project hoặc đang nạp. Nhờ người dùng mở rồi gọi lại; đừng gọi lặp liên tục.
+- Không bịa lời thoại hay sự kiện chưa nghe, chưa xem; chỗ suy đoán thì nói rõ.
+- Lỗi "Mở ContextCut trước (…)": nhờ người dùng mở app/project rồi gọi lại; đừng gọi lặp.
 
 ### Cắt và chuyển POV
 
@@ -31,7 +32,7 @@ ContextCut là app dựng video gaming (fork Kdenlive) của Nhan, dùng chung v
 
 - workflow: Quy trình dựng. Phân tích → dàn ý → duyệt → dựng → tự kiểm → xuất; bước nào làm được ở bản này, khi nào phải hỏi người dùng.
 - editing-rules: Quy tắc biên tập. Cắt và chuyển POV cho tự nhiên (Nhan chốt bằng ví dụ), không bịa, chống "lố", tiết kiệm hạn mức gói AI, việc phải xác nhận.
-- software: Cách dùng phần mềm. Frame, khoảng nửa mở, fps, id, track và tag, bản ghi, track_map và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột, phụ đề), lời thoại (transcript, job), xem hình (4 tool ảnh, client nào hiện ảnh), zoom, phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
+- software: Cách dùng phần mềm. Frame, khoảng nửa mở, fps, id, track và tag, bản ghi, track_map và nguồn, revision/base_revision, sửa timeline theo đợt (op, undo, xung đột, phụ đề), lời thoại (transcript, job), xem hình (4 tool ảnh, client nào hiện ảnh), zoom, xuất file (xác nhận trong app, NVENC/x264, ffprobe), mở project, phân trang, lỗi, tool có bây giờ và ở giai đoạn sau.
 - styles/gaming: Phong cách gaming (funny moments). Funny moments nhiều người chơi kiểu nhóm CKG (HK15, Sangtraan): bố cục, phụ đề câu đắt, meme, thay facecam, nhịp, Minecraft.
 - patterns/irony-cut: Cú cắt mỉa (irony cut). Câu thoại tự tin, cắt gọn sang cảnh phản bác câu đó, nhạc vào đúng điểm cắt.
 - patterns/meanwhile: Hai mạch song song ("Trong lúc đó:"). Kể trọn một mạch rồi chuyển sang mạch song song tương phản của người khác, mở bằng thẻ chữ "Trong lúc đó:".

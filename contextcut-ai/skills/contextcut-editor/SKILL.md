@@ -10,13 +10,14 @@ description: Dựng video gaming trong ContextCut (fork Kdenlive) qua MCP server
 ContextCut là app dựng video gaming (fork Kdenlive) của Nhan, dùng chung với vài người bạn. MCP server `contextcut` đọc và sửa timeline đang mở trong app; người dùng duyệt và chỉnh tay như với một người dựng phụ. Trả lời bằng tiếng Việt.
 
 - Gọi `get_editor_state` trước mọi việc. Thời gian là **frame nguyên** theo fps của project; mọi khoảng là nửa mở `[start_f, end_f)`.
-- Sửa: đọc `revision` → `validate_operations` → `apply_operations(ops, base_revision, label "AI: …")`. Một đợt là một bước undo (Ctrl+Z hoàn tác cả đợt); người dùng sửa chen ngang thì bị từ chối (`conflict`): đọc lại rồi gửi lại. Op và tham số: `list_operations`; id nguồn (nhạc, bản ghi): `list_sources`.
-- Chỉ dựng phần người dùng đã duyệt; xong thì báo nhãn đợt và nhắc Ctrl+Z.
+- Sửa: đọc `revision` → `validate_operations` → `apply_operations(ops, base_revision, label "AI: …")`. Một đợt là một bước undo (Ctrl+Z hoàn tác cả đợt); sửa chen ngang → `conflict`: đọc lại rồi gửi lại. Op: `list_operations`; id nguồn: `list_sources`.
+- Chỉ dựng phần người dùng đã duyệt; xong thì báo nhãn đợt, nhắc Ctrl+Z.
 - Nghe: `transcribe(recording)` (job nền, `get_job`) rồi `get_transcript` theo khoảng. Phụ đề: `add_subtitles` hoặc op `caption` có `speaker` (câu đắt).
-- Xem (≤ 12 ảnh/lần, đọc chữ trước): `get_contact_sheet`/`get_source_frames` (bản ghi gốc), `render_frames` (timeline đã dựng, tự kiểm sau khi sửa), `get_viewer_frame` (khung người dùng đang xem).
+- Xem (≤ 12 ảnh/lần, đọc chữ trước): `get_contact_sheet`/`get_source_frames` (bản ghi gốc), `render_frames` (timeline đã dựng, tự kiểm), `get_viewer_frame` (khung đang xem).
+- Xuất chỉ khi người dùng bảo: `export` → họ bấm "Xuất" trong app (không bấm thay) → `get_job` → báo `checks`. Mở project khác: `open_project`.
 - Trước khi đề xuất dựng, đọc `get_guide("workflow")` và `get_guide("editing-rules")`; phong cách gaming: `get_guide("styles/gaming")`. Mục lục: `get_guide()`.
-- Không bịa lời thoại hay sự kiện chưa nghe hoặc chưa xem. Chỗ nào là suy đoán thì nói rõ.
-- Lỗi "Mở ContextCut trước (…)": app chưa chạy, chưa mở project hoặc đang nạp. Nhờ người dùng mở rồi gọi lại; đừng gọi lặp liên tục.
+- Không bịa lời thoại hay sự kiện chưa nghe, chưa xem; chỗ suy đoán thì nói rõ.
+- Lỗi "Mở ContextCut trước (…)": nhờ người dùng mở app/project rồi gọi lại; đừng gọi lặp.
 
 ## Quy trình dựng
 
@@ -32,7 +33,7 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 | 4 | Duyệt | Người dùng đọc, sửa, duyệt dàn ý. Đoạn chưa duyệt thì chưa dựng | — | |
 | 5 | Dựng | Mỗi đoạn đã duyệt là một đợt sửa có nhãn `AI: …` và lý do | `list_operations`, `validate_operations`, `apply_operations` | **bây giờ** |
 | 6 | Tự kiểm | Xem khung hình chỗ vừa sửa: cắt đúng chỗ chưa, zoom đúng chỗ chưa, chữ có che giao diện game không | `render_frames` | **bây giờ** |
-| 7 | Xuất | Chỉ khi người dùng bảo | `export` | P2c |
+| 7 | Xuất | Chỉ khi người dùng bảo; hỏi tên và chỗ lưu file; app hỏi người dùng xác nhận | `export`, `get_job` | **bây giờ** |
 
 ### Bản hiện tại làm được gì
 
@@ -40,7 +41,8 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 - Trả lời câu hỏi về project ("timeline có gì", "bản ghi nào chưa dùng", "phút 12 là clip nào") bằng số liệu thật từ tool.
 - **Nghe lời thoại**: phiên âm theo từng từ track Mic (Nhan) và Discord (bạn bè), đọc theo khoảng trên timeline hoặc bản ghi gốc.
 - **Xem hình**: lướt bản ghi bằng contact sheet, xem frame gốc ở mốc cụ thể, xem timeline đã dựng (như file xuất) để tự kiểm, xem khung người dùng đang nhìn. Đề xuất dàn ý dựa trên transcript, hình đã xem, marker và lời người dùng kể; chỗ chưa xem thì nói rõ là đoán.
-- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker, **zoom** vào gameplay. Chưa có: hiệu ứng khác (P6), xuất file (P2c).
+- **Sửa timeline** phần đã duyệt: cắt bỏ đoạn, cắt/tỉa/dời clip, chèn đoạn từ bản ghi, thêm nhạc, thẻ chữ "Trong lúc đó:", câu đắt theo người nói, phụ đề đầy đủ, marker, **zoom** vào gameplay. Chưa có: hiệu ứng khác (P6).
+- **Xuất** MP4 (YouTube 1080p60 hoặc theo project) sau khi người dùng bấm "Xuất" trong app; **mở** project `.kdenlive` khác.
 
 ### Nghe trước khi dựng
 
@@ -64,6 +66,19 @@ Người dùng quay buổi chơi bằng OBS, kéo vào ContextCut, rồi nhờ a
 3. Sau khi sửa: `render_frames(frames)` ở chỗ vừa sửa (đầu, giữa, cuối đoạn): đúng như file xuất (cắt, zoom, chữ, phụ đề). Sai thì sửa tiếp hoặc `undo_batch`, rồi kiểm lại.
 4. Người dùng nói "chỗ này": `get_viewer_frame()` là khung họ đang xem; `at_f` dời playhead tới mốc mình muốn chỉ cho họ thấy.
 5. Client không hiện ảnh: mỗi ảnh có đường dẫn file trong phần chữ, mở file đó (vd. tool đọc file của client).
+
+### Xuất
+
+1. Chỉ xuất khi người dùng bảo. Hỏi tên file và chỗ lưu nếu họ chưa nói (đường dẫn tuyệt đối `.mp4`, không trùng file nguồn), cả timeline hay một đoạn.
+2. Preset `youtube-1080p60` khi project là 1920×1080 60 fps (như bản ghi OBS khuyến nghị); project khác cỡ/fps thì `project`, hoặc nhờ người dùng đổi Project Settings. Tool báo rõ khi không khớp.
+3. `export(output, start_f?, end_f?)`: ContextCut hiện hộp "AI muốn xuất video" cho người dùng. **Chỉ người dùng bấm "Xuất"**: agent không bấm thay, không điều khiển giao diện, không xuất bằng đường khác (melt, ffmpeg) để lách. Báo người dùng nhìn sang app.
+4. `get_job(job_id, wait_s=50)` tới khi `done`. Đoạn dài xuất mất vài phút (NVENC nhanh hơn thời gian thực nhiều lần; x264 chậm hơn).
+5. Báo: file, thời lượng, dung lượng, bộ mã hoá (`fallback_reason` khi NVENC hỏng phải dùng x264), `ok` và các `checks` hỏng nếu có. `cancelled` là người dùng không đồng ý (hoặc huỷ): không hỏi lại trừ khi họ bảo.
+6. File đã có: chỉ `overwrite: true` khi người dùng đồng ý ghi đè (hộp xác nhận ghi rõ "GHI ĐÈ").
+
+### Mở project khác
+
+`open_project(path)` mở file `.kdenlive` người dùng chỉ. Project đang mở có thay đổi chưa lưu thì app hỏi người dùng Save / Don't Save / Cancel: báo họ trả lời trong app, đừng chọn thay. Kết quả `pending` (kèm `dialog` app đang hỏi): gọi lại `open_project` cùng path để chờ tiếp; `cancelled`: project cũ còn nguyên. Sau khi mở, mọi id clip, track, `batch_id` cũ hết giá trị: đọc lại `get_editor_state`.
 
 ### Một lần sửa
 
@@ -249,6 +264,33 @@ Client hiện ảnh từ tool (thử 22/10/2026 với video in số frame: agent
 
 Client không hiện ảnh thì mở file theo đường dẫn trong phần chữ.
 
+### Xuất file
+
+`export(output, start_f?, end_f?, preset?, encoder?, overwrite?, originals?)` xuất timeline (hoặc `[start_f, end_f)`) ra MP4 H.264 + AAC 320k bằng melt trên chính timeline đang mở (cùng engine với preview và `render_frames`), file gốc thay proxy.
+
+| Tham số | Ý nghĩa |
+| --- | --- |
+| `output` | Đường dẫn tuyệt đối `.mp4`, thư mục đã có; không trùng file nguồn nào của project (kể cả proxy) hay file `.kdenlive`; không qua symlink |
+| `preset` | `youtube-1080p60` (mặc định; project phải 1920×1080, 60 hoặc 59,94 fps) hoặc `project` (giữ cỡ, fps của project). ContextCut không tự đổi cỡ khi xuất |
+| `encoder` | `auto` (mặc định: NVENC trên GPU NVIDIA, hỏng thì x264), `nvenc`, `x264` (CPU, chậm hơn) |
+| `overwrite` | Ghi đè file đã có; chỉ khi người dùng đồng ý |
+| `originals` | `false` dùng proxy (nhanh, mờ): chỉ để thử |
+
+- **Người dùng xác nhận trong app**: tool hiện hộp "AI muốn xuất video" (file, đoạn, preset, mã hoá) trong ContextCut và tạo job; job chờ tới khi người dùng bấm "Xuất" (nút mặc định là "Không xuất"; hộp tự đóng sau 15 phút). Tool chờ tối đa 50 s rồi trả `job_id` với `stage` cho biết còn chờ người dùng hay đang xuất. Agent không bấm thay.
+- Job: lấy timeline lúc người dùng bấm Xuất → mã hoá ra `<tên>.part.mp4` cạnh file đích → kiểm bằng ffprobe → đổi tên thành `output`. Hỏng, huỷ hay từ chối thì không có file nào ở `output`. NVENC giữ khoá GPU (job phiên âm chờ), x264 thì không.
+- `get_job` khi `done`: `result.ok`, `checks` (`streams`: 1 hình H.264 + 1 tiếng AAC; `frames`: đúng số frame của khoảng; `duration`, `av_offset`: lệch đầu hình/tiếng < 1 frame; `audio_length`; `format`: cỡ, fps), `encoder`, `fallback_reason`, `size_mb`, `encode_s`, `realtime_x`.
+
+### Mở project
+
+`open_project(path, wait_s?)` mở file `.kdenlive` khác như File › Open. Project đang mở có thay đổi chưa lưu thì Kdenlive hỏi người dùng (Save / Don't Save / Cancel); hộp khôi phục file, file thiếu… cũng do người dùng trả lời. Trong lúc đó tool khác trả "ContextCut đang bận".
+
+| `state` | Nghĩa |
+| --- | --- |
+| `opened` | Project mới đang mở; kèm `project`, `profile`, `sequence`, `counts`, `revision` |
+| `pending` | App còn hỏi người dùng (`dialog`: tiêu đề + chữ) hoặc đang nạp: gọi lại `open_project` cùng path để chờ tiếp |
+| `cancelled` | Người dùng bấm Cancel (hoặc lưu không được): project cũ còn nguyên |
+| `failed` | Kdenlive không mở được file (người dùng đã thấy lý do) |
+
 ### Phân trang
 
 - `get_timeline`: `start_f`, `end_f` (lấy item **giao** với khoảng), `tracks` (id hoặc tag), `limit` (mặc định 100, tối đa 1000), `cursor`.
@@ -263,6 +305,9 @@ Client không hiện ảnh thì mở file theo đường dẫn trong phần ch�
 | --- | --- | --- |
 | "Mở ContextCut trước (…)" | App chưa chạy, chưa mở project (màn hình chào, hộp File Recovery) hoặc đang nạp | Nhờ người dùng mở; gọi lại sau; không gọi lặp |
 | "không trả lời sau … giây" | App đang bận, đang mở hộp thoại, hoặc treo | Nhờ người dùng xem app |
+| "ContextCut đang bận (…)" | App đang hỏi người dùng (hộp thoại) hoặc đang mở project; tool sửa không chạy khi có hộp thoại modal | Nhờ người dùng trả lời hộp thoại trong app, rồi gọi lại; không gọi dồn |
+| "Project đang là …, preset … cần …" | Project không hợp preset xuất | Dùng preset `project` hoặc nhờ người dùng đổi Project Settings |
+| "output trùng file nguồn…" / "… đã có" | Đường dẫn xuất không an toàn | Hỏi người dùng tên khác (hoặc đồng ý ghi đè: `overwrite`) |
 | `stale_cursor` | Timeline đổi giữa hai trang | Đọc lại từ trang đầu |
 | "Timeline đã đổi từ lúc đọc" (`conflict`) | Người dùng vừa sửa, undo, hoặc đợt khác đã áp dụng; không có gì bị đổi | Đọc lại `get_timeline`, gửi lại với `base_revision` mới |
 | "Đợt sửa không hợp lệ" (`validation_failed`) | Tham số sai; không có gì bị đổi | Sửa theo từng dòng `op <i> (<trường>)` |
@@ -288,15 +333,15 @@ Client không hiện ảnh thì mở file theo đường dẫn trong phần ch�
 | `add_markers`, `undo_batch` | Thêm marker; hoàn tác đợt vừa áp dụng | **bây giờ** |
 | `import_media` | Nhập file media (nhạc, SFX, video, ảnh) vào bin | **bây giờ** |
 | `set_track_map` | Sửa sơ đồ track audio của bản ghi (stream nào là Mic, Discord, game) | **bây giờ** |
-| `get_job`, `cancel_job` | Theo dõi / huỷ job nền (phiên âm) | **bây giờ** |
+| `get_job`, `cancel_job` | Theo dõi / huỷ job nền (phiên âm, dựng khung hình, xuất) | **bây giờ** |
 | `transcribe` | Phiên âm theo từ track Mic/Discord của bản ghi (job nền) | **bây giờ** |
 | `get_transcript` | Lời thoại theo câu/từ, người nói, frame timeline hoặc nguồn; phân trang | **bây giờ** |
 | `add_subtitles` | Phụ đề đầy đủ từ transcript vào track phụ đề Kdenlive (một bước undo; `preview` xem trước) | **bây giờ** |
 | `get_contact_sheet`, `get_source_frames` | Xem bản ghi gốc: lưới ảnh một đoạn, khung ở từng frame | **bây giờ** |
 | `render_frames` | Xem timeline đã dựng (như file xuất) để tự kiểm | **bây giờ** |
 | `get_viewer_frame` | Khung người dùng đang xem trong monitor | **bây giờ** |
-| `open_project` | Mở project | P2c |
-| `export` | Xuất file YouTube 1080p60 | P2c |
+| `export` | Xuất MP4 (YouTube 1080p60 hoặc theo project) sau khi người dùng bấm Xuất trong app; kiểm ffprobe | **bây giờ** |
+| `open_project` | Mở project `.kdenlive` khác (app hỏi lưu project đang sửa) | **bây giờ** |
 | `get_context` | Lời thoại + sự kiện gộp theo thời gian | P3 |
 | `find_moments`, `detect_beats`, `beat_montage`, `get_outline`, `save_outline`, `list_assets` | Khoảnh khắc, beat, dàn ý, thư viện nhạc/SFX/meme | P3 |
 | `register_pov`, `sync_pov`, `pov_placeholder`, `pov_switch` | Nhiều POV | P4 |
