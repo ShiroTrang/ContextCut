@@ -69,6 +69,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Clip bin đang nạp (`StatusWaiting`, tốt hay hỏng đều vậy) bị Kdenlive khoá ghi producer trên luồng giao diện tới khi nạp xong: cầu nối gọi `frameDuration()`, `getFrameSize()`, `getOriginalFps()`, `getProducerIntProperty()`… trên clip đó là app treo vĩnh viễn. Kiểm `clipStatus() != StatusWaiting` hoặc `statusReady()` trước (`stillLoading` trong `editorreader.cpp`; `patches.md`, `docs/handoff/P2a.md`).
 - melt dựng scene Kdenlive (`get_scene`, `.kdenlive`) với consumer có `width`/`height`: thiếu `progressive=1` thì crash, có thì vẫn chừa viền đen 16 px mỗi bên khi nguồn lớn hơn profile (transition `qtblend`). Dựng ở cỡ profile rồi thu nhỏ (`render.py`). argv của melt không giữ chữ có dấu: chạy với `cwd` = thư mục làm việc, đường dẫn có dấu để trong XML.
 - Xem hình (P2b): `uv run --directory contextcut-ai --no-sync pytest -m live tests/test_live_vision.py tests/test_live_zoom.py` trên `p1-gate` (nhập video mã số frame rồi hoàn tác). `p1-gate` bật proxy: nhập file ≥ 1000 px làm Kdenlive thêm bước "Add proxy clip", đợt `import_media` trước đó không `undo_batch` được nữa.
+- Xuất (P2c): melt trên `get_scene` với `<consumer avformat>` **trong XML** (đường dẫn có dấu được); NVENC hỏng thì melt segfault (0xC0000005) để lại file 48 byte → job tự rơi về x264. Thử nhánh rơi về: `CONTEXTCUT_FORCE_NVENC_FAIL=1` trong môi trường MCP server. Lớp exception dùng chung worker ↔ module job phải ở module khác `worker.py` (worker chạy là `__main__`).
+- Kdenlive crash khi mở project thứ hai trong vòng 250 ms sau project trước (`refreshMonitorTimer` của monitor, `patches.md`): `open_project` tự đợi; mở bằng code khác cũng phải đợi.
+- Hộp thoại của app từ tiến trình nền: `SendKeys` sau `SetForegroundWindow` thường lạc sang cửa sổ khác (khoá foreground). Dùng `contextcut-ai/tools/ui/dialog.ps1` (`PostMessage` nhấp chuột theo toạ độ client; toạ độ nút trong `docs/handoff/P2c.md`). Chạy `claude -p` thử cổng: `contextcut-ai/tools/agent_run.sh`. gdb: gắn vào app đang chạy (`gdb -batch -ex "attach <pid>" -ex continue -ex "bt 40"`), chạy từ đầu dưới gdb thì kẹt splash.
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -79,7 +82,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
 | P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | **Xong** 22/10/2026: P1a cầu nối C++ (`docs/handoff/P1a.md`), P1b MCP server + guide (`docs/handoff/P1b.md`), P1c op sửa timeline, một bước undo mỗi đợt, cổng P1 qua với Claude Code (`docs/handoff/P1c.md`, có tóm tắt P1) |
-| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | **Đang làm**: P2a phiên âm + phụ đề xong (agent chạy trọn transcribe → phụ đề, lưu/mở lại được), cổng đo timing chờ bản ghi OBS + mốc tay của Nhan (`docs/handoff/P2a.md`, `docs/plans/P2.md`); **P2b xong** 22/10: xem hình (`get_source_frames`, `get_contact_sheet`, `render_frames`, `get_viewer_frame`), op `zoom`, agent tự xem → zoom → tự kiểm (`docs/handoff/P2b.md`); P2c xuất chưa |
+| P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | **Xong** 22/10/2026 trừ một cổng: P2a phiên âm + phụ đề (`docs/handoff/P2a.md`; **đo timing < 100 ms còn chờ mốc tay của Nhan**), P2b xem hình + `zoom` (`docs/handoff/P2b.md`), P2c `export` (xác nhận trong app, NVENC → x264, ffprobe) + `open_project`, review cả P2 (`docs/handoff/P2c.md`, có tóm tắt P2) |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
 | P5 | Giao diện Dễ, dock Hoạt động AI, zip portable, logo | Chưa |

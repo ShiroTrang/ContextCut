@@ -25,6 +25,7 @@ Project uv, Python 3.11, `mcp==2.3.0`. Tài liệu thiết kế: `docs/specs/202
 | `tools/bridge_probe.py` | Client thử cầu nối (P1a) |
 | `tools/p1_fixture.py` | Dựng project thử `p1-gate` cho test sống của op (P1c), phụ đề (P2a), xem hình (P2b), mở project và hộp xác nhận (P2c, `test_live_open.py`) |
 | `tools/p2_fixture.py` | Bản ghi OBS giả 5 stream audio có tên (P2a); video mã số frame + `read_frame_code` để test ảnh đúng mốc (P2b) |
+| `tools/mcp_call.py`, `tools/agent_run.sh`, `tools/ui/*.ps1` | Kiểm cổng: gọi một tool MCP trong tiến trình; chạy `claude -p` phiên mới chỉ với server này; mở/lưu/đóng app và bấm hộp thoại của app bằng PostMessage (P2c) |
 | `tools/convert_phowhisper.py` | Chuyển PhoWhisper-large trong cache HF sang CTranslate2 (một lần) |
 | `tools/asr_eval.py`, `tools/make_calibration.py` | Đo WER/lệch thời gian so với mốc gõ tay (Lyric Calibrator); chuẩn bị đoạn để gõ mốc (`docs/measurements/P2a-asr.md`) |
 | `tests/` | pytest: cầu nối giả (`fake_bridge.py`) + test sống `-m live` (tự bỏ qua khi app không chạy); `test_live_ops.py` chỉ chạy khi project đang mở tên `p1-gate` vì nó sửa timeline (rồi hoàn tác) |
