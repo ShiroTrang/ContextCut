@@ -526,6 +526,20 @@ JsonRpc::RpcResult recordings(const QJsonObject &params, qint64 revision)
                                               {QStringLiteral("next_cursor"), nextCursor(revision, offset, limit, total)}});
 }
 
+QJsonObject sourceObject(const std::shared_ptr<ProjectClip> &clip)
+{
+    return {{QStringLiteral("id"), clip->clipId()},
+            {QStringLiteral("name"), clip->clipName()},
+            {QStringLiteral("type"), clipTypeName(clip->clipType())},
+            {QStringLiteral("path"), nullIfEmpty(clip->url())},
+            {QStringLiteral("duration_f"), clip->hasLimitedDuration() ? QJsonValue(qint64(clip->frameDuration())) : QJsonValue(QJsonValue::Null)},
+            {QStringLiteral("has_video"), clip->hasVideo()},
+            {QStringLiteral("has_audio"), clip->hasAudio()},
+            {QStringLiteral("ready"), clip->statusReady()},
+            {QStringLiteral("on_timeline"), clip->isIncludedInTimeline()},
+            {QStringLiteral("recording"), isRecording(clip->clipType())}};
+}
+
 JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision)
 {
     JsonRpc::RpcError error;
@@ -551,19 +565,7 @@ JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision)
     }
     QJsonArray list;
     for (qint64 i = offset; i < std::min(total, offset + limit); ++i) {
-        const auto &clip = clips.at(i);
-        list.append(QJsonObject{
-            {QStringLiteral("id"), clip->clipId()},
-            {QStringLiteral("name"), clip->clipName()},
-            {QStringLiteral("type"), clipTypeName(clip->clipType())},
-            {QStringLiteral("path"), nullIfEmpty(clip->url())},
-            {QStringLiteral("duration_f"), clip->hasLimitedDuration() ? QJsonValue(qint64(clip->frameDuration())) : QJsonValue(QJsonValue::Null)},
-            {QStringLiteral("has_video"), clip->hasVideo()},
-            {QStringLiteral("has_audio"), clip->hasAudio()},
-            {QStringLiteral("ready"), clip->statusReady()},
-            {QStringLiteral("on_timeline"), clip->isIncludedInTimeline()},
-            {QStringLiteral("recording"), isRecording(clip->clipType())},
-        });
+        list.append(sourceObject(clips.at(i)));
     }
     return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("revision"), revision},
                                               {QStringLiteral("sources"), list},

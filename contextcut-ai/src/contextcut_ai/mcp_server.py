@@ -164,6 +164,14 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         Người dùng đã sửa thêm thì bị từ chối: nhờ người dùng tự hoàn tác."""
         return await call("undo_batch", {"batch_id": batch_id}, resend=False)
 
+    @tool(ADDITIVE)
+    async def import_media(
+        path: Annotated[str, Field(min_length=1, description="Đường dẫn tuyệt đối tới file video/âm thanh/ảnh, vd. D:/Nhạc/Can Can.mp3")],
+    ) -> str:
+        """Nhập một file media (video, nhạc, SFX, ảnh) vào bin để dùng làm source; một bước undo. Chỉ nhận đuôi media,
+        không nhận file qua symlink. Trả source (id, độ dài, ready); chưa ready thì đợi rồi xem list_sources."""
+        return await call("import_media", {"path": path}, resend=False)
+
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,
     ) -> str:

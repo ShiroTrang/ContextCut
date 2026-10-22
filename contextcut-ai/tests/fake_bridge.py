@@ -106,6 +106,7 @@ def default_responses() -> dict[str, Response]:
         "apply_operations": copy.deepcopy(APPLIED),
         "add_markers": {"batch_id": "b-2", "revision": 1873470, "added": 1},
         "undo_batch": {"revision": 1873480, "undone": "AI: cắt đoạn chết"},
+        "import_media": {"batch_id": "b-3", "revision": 1873490, "source": copy.deepcopy(SOURCES["sources"][1])},
     }
 
 

@@ -4,7 +4,11 @@
 */
 
 #include "batchapplier.h"
+#include "bin/clipcreator.hpp"
 #include "bin/model/markerlistmodel.hpp"
+#include "bin/projectclip.h"
+#include "bin/projectfolder.h"
+#include "bin/projectitemmodel.h"
 #include "contextcut/bridge/aibridgeserver.h"
 #include "contextcut/bridge/revisiontracker.h"
 #include "contextcut/model/editorreader.h"
@@ -17,6 +21,11 @@
 #include "timelineops.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QPointer>
+#include <QTimer>
 #include <QHash>
 #include <QLoggingCategory>
 #include <QRegularExpression>
@@ -35,6 +44,14 @@ constexpr int ReasonMax = 500;
 constexpr int MarkersMax = 500;
 constexpr int CommentMax = 500;
 constexpr int StatusTimeoutMs = 5000;
+constexpr int ImportWaitMs = 20000;
+
+/** Files import_media accepts (docs/protocol.md §8.8): video, audio, still images; never projects, playlists or programs. */
+const QStringList MediaSuffixes{QStringLiteral("mkv"),  QStringLiteral("mp4"), QStringLiteral("mov"),  QStringLiteral("webm"), QStringLiteral("avi"),
+                                QStringLiteral("mpg"),  QStringLiteral("mpeg"), QStringLiteral("m4v"), QStringLiteral("ts"),   QStringLiteral("flv"),
+                                QStringLiteral("wav"),  QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),  QStringLiteral("oga"),
+                                QStringLiteral("m4a"),  QStringLiteral("aac"), QStringLiteral("opus"), QStringLiteral("wma"),  QStringLiteral("png"),
+                                QStringLiteral("jpg"),  QStringLiteral("jpeg"), QStringLiteral("webp"), QStringLiteral("bmp"), QStringLiteral("gif")};
 
 /** Undo commands pushed by the bridge, so undo_batch can tell whether one is still the top of the stack. */
 struct Batch
@@ -312,6 +329,68 @@ JsonRpc::RpcResult addMarkers(AiBridgeServer *bridge, const QJsonObject &params)
                                               {QStringLiteral("added"), list.size()}});
 }
 
+JsonRpc::RpcResult importMedia(AiBridgeServer *bridge, const QJsonObject &params)
+{
+    JsonRpc::RpcError error;
+    if (!EditorReader::activeTimeline(error)) {
+        return JsonRpc::RpcResult::fail(error);
+    }
+    const QJsonValue value = params.value(QLatin1String("path"));
+    const QFileInfo info(value.toString());
+    if (!value.isString() || value.toString().isEmpty() || !info.isAbsolute()) {
+        return JsonRpc::RpcResult::fail(JsonRpc::invalidParams(QStringLiteral("path"), QStringLiteral("path must be an absolute file path")));
+    }
+    if (!MediaSuffixes.contains(info.suffix().toLower())) {
+        return JsonRpc::RpcResult::fail(JsonRpc::invalidParams(
+            QStringLiteral("path"), QStringLiteral("only media files can be imported (%1)").arg(MediaSuffixes.join(QLatin1String(", ")))));
+    }
+    if (!info.exists() || !info.isFile()) {
+        return JsonRpc::RpcResult::fail(JsonRpc::invalidParams(QStringLiteral("path"), QStringLiteral("no such file: %1").arg(info.absoluteFilePath())));
+    }
+    // Resolved path must be the given one: no symlink, shortcut or junction anywhere on the way
+    const QString canonical = info.canonicalFilePath();
+    if (info.isSymLink() || info.isShortcut() || canonical.isEmpty() || QDir::cleanPath(info.absoluteFilePath()).compare(canonical, Qt::CaseInsensitive) != 0) {
+        return JsonRpc::RpcResult::fail(
+            JsonRpc::invalidParams(QStringLiteral("path"), QStringLiteral("the path goes through a link; pass the real location (%1)").arg(canonical)));
+    }
+
+    struct Waiter
+    {
+        bool ready{false};
+        QPointer<QEventLoop> loop;
+    };
+    auto waiter = std::make_shared<Waiter>();
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    const auto model = pCore->projectItemModel();
+    const QString binId = ClipCreator::createClipFromFile(canonical, model->getRootFolder()->clipId(), model, undo, redo, [waiter](const QString &) {
+        waiter->ready = true;
+        if (waiter->loop) {
+            waiter->loop->quit();
+        }
+    });
+    if (binId == QLatin1String("-1")) {
+        return JsonRpc::RpcResult::fail(JsonRpc::internalError(QStringLiteral("Kdenlive could not create a clip from %1").arg(canonical)));
+    }
+    const QString label = normalisedLabel(QStringLiteral("nhập %1").arg(info.fileName()));
+    const QString batchId = pushBatch(undo, redo, label);
+    if (!waiter->ready) {
+        // The clip loads in a worker thread; bridge requests arriving meanwhile wait in the queue
+        QEventLoop loop;
+        waiter->loop = &loop;
+        QTimer::singleShot(ImportWaitMs, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    const auto clip = model->getClipByBinID(binId);
+    if (!clip) {
+        return JsonRpc::RpcResult::fail(conflict(bridge->revisions()->current(), QStringLiteral("the imported clip was removed while it loaded")));
+    }
+    showStatus(QStringLiteral("%1 — xong. Ctrl+Z để hoàn tác.").arg(label), OperationCompletedMessage, StatusTimeoutMs);
+    return JsonRpc::RpcResult::ok(QJsonObject{{QStringLiteral("batch_id"), batchId},
+                                              {QStringLiteral("revision"), bridge->revisions()->current()},
+                                              {QStringLiteral("source"), EditorReader::sourceObject(clip)}});
+}
+
 JsonRpc::RpcResult undoBatch(AiBridgeServer *bridge, const QJsonObject &params)
 {
     JsonRpc::RpcError error;
@@ -346,6 +425,7 @@ void registerMethods(AiBridgeServer &server)
     server.registerMethod(QStringLiteral("apply_operations"), [bridge](const QJsonObject &params) { return applyOperations(bridge, params); });
     server.registerMethod(QStringLiteral("add_markers"), [bridge](const QJsonObject &params) { return addMarkers(bridge, params); });
     server.registerMethod(QStringLiteral("undo_batch"), [bridge](const QJsonObject &params) { return undoBatch(bridge, params); });
+    server.registerMethod(QStringLiteral("import_media"), [bridge](const QJsonObject &params) { return importMedia(bridge, params); });
 }
 
 } // namespace ContextCut::BatchApplier

@@ -9,8 +9,8 @@ namespace ContextCut {
 class AiBridgeServer;
 }
 
-/** @brief The AI bridge's editing methods (docs/protocol.md §8.5–8.7): list_operations, validate_operations, apply_operations,
-    add_markers, undo_batch. Each applied batch is exactly one labelled undo step; a failing op undoes the whole batch. */
+/** @brief The AI bridge's editing methods (docs/protocol.md §8.5–8.8): list_operations, validate_operations, apply_operations,
+    add_markers, undo_batch, import_media. Each applied batch is exactly one labelled undo step; a failing op undoes the whole batch. */
 namespace ContextCut::BatchApplier {
 
 void registerMethods(AiBridgeServer &server);

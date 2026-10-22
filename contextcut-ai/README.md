@@ -8,7 +8,7 @@ Project uv, Python 3.11, `mcp==2.3.0`. Tài liệu thiết kế: `docs/specs/202
 
 | Đường dẫn | Việc |
 | --- | --- |
-| `src/contextcut_ai/mcp_server.py` | MCP server `contextcut` (entry point `contextcut-ai`): tool đọc `get_editor_state`, `get_timeline`, `list_recordings`, `list_sources`, `list_operations`, `validate_operations`, `get_guide`; tool sửa `apply_operations`, `add_markers`, `undo_batch` (P1c); prompt `mo-phien-dung`; resource `contextcut://guide/<topic>`; `instructions` |
+| `src/contextcut_ai/mcp_server.py` | MCP server `contextcut` (entry point `contextcut-ai`): tool đọc `get_editor_state`, `get_timeline`, `list_recordings`, `list_sources`, `list_operations`, `validate_operations`, `get_guide`; tool sửa `apply_operations`, `add_markers`, `undo_batch`, `import_media` (P1c); prompt `mo-phien-dung`; resource `contextcut://guide/<topic>`; `instructions` |
 | `src/contextcut_ai/bridge_client.py` | Client WebSocket tới app: đọc `bridge.json`, một kết nối, tự nối lại khi app khởi động lại; lệnh sửa không gửi lại khi kết nối rớt sau lúc gửi |
 | `src/contextcut_ai/errors.py` | Lỗi cầu nối → câu tiếng Việt cho agent ("Mở ContextCut trước (…)") |
 | `guide/` | Hướng dẫn cho agent, **nguồn duy nhất** (tiếng Việt, front matter `title`/`summary`/`order`) |

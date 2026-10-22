@@ -26,7 +26,7 @@ def text_of(result) -> str:
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
               "validate_operations"}
-EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media"}
 
 
 async def test_lists_tools(mcp):
@@ -39,6 +39,7 @@ async def test_lists_tools(mcp):
     assert tools["apply_operations"].annotations.destructive_hint is True
     assert tools["undo_batch"].annotations.destructive_hint is True
     assert tools["add_markers"].annotations.destructive_hint is False
+    assert tools["import_media"].annotations.destructive_hint is False
     assert set(tools["get_timeline"].input_schema["properties"]) == {"start_f", "end_f", "tracks", "limit", "cursor"}
     assert set(tools["list_recordings"].input_schema["properties"]) == {"limit", "cursor"}
     assert set(tools["apply_operations"].input_schema["properties"]) == {"ops", "base_revision", "label", "reason"}
@@ -152,12 +153,14 @@ async def test_other_edit_tools_passthrough(mcp, bridge):
     await mcp.call_tool("validate_operations", {"ops": [{"type": "split", "clip_id": 42, "at_f": 100}]})
     await mcp.call_tool("add_markers", {"markers": [{"f": 3600, "comment": "Hook"}], "base_revision": 7})
     await mcp.call_tool("undo_batch", {"batch_id": "b-1"})
+    await mcp.call_tool("import_media", {"path": "D:/Nhạc/Can Can.mp3"})
     await mcp.call_tool("list_operations", {})
     await mcp.call_tool("list_sources", {})
     assert bridge.calls == [
         ("validate_operations", {"ops": [{"type": "split", "clip_id": 42, "at_f": 100}]}),
         ("add_markers", {"markers": [{"f": 3600, "comment": "Hook"}], "base_revision": 7}),
         ("undo_batch", {"batch_id": "b-1"}),
+        ("import_media", {"path": "D:/Nhạc/Can Can.mp3"}),
         ("list_operations", None),
         ("list_sources", {}),
     ]

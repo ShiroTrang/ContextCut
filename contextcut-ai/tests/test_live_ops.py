@@ -390,3 +390,22 @@ async def test_undo_batch_only_top(app, clean):
     await expect_error(undo(app, second), "conflict")
     await undo(app, first)
     await expect_error(app.call("undo_batch", {"batch_id": "khong-co"}), "not_found")
+
+
+@pytest.mark.parametrize("path", ["stereo.flac", "C:/Windows/notepad.exe", "C:/khong-co/nhac.mp3", ""])
+async def test_import_media_rejects_bad_paths(app, clean, path):
+    err = await expect_error(app.call("import_media", {"path": path}), "invalid_params")
+    assert err.data["field"] == "path"
+
+
+async def test_import_media_audio(app, clean):
+    sources = await source_ids(app)
+    flac = sources["stereo.flac"]
+    batch = await app.call("import_media", {"path": flac["path"]})
+    app.batches.append(batch["batch_id"])
+    source = batch["source"]
+    assert source["id"] not in {s["id"] for s in sources.values()}
+    assert source["ready"] and source["has_audio"] and source["duration_f"] == flac["duration_f"]
+    assert (await app.call("get_editor_state"))["undo"]["next_undo"] == "AI: nhập stereo.flac"
+    await undo(app, batch)
+    assert len(await source_ids(app)) == len(sources)

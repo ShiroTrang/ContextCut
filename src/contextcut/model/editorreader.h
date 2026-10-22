@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <memory>
 
+class ProjectClip;
 class TimelineItemModel;
 
 namespace ContextCut {
@@ -33,6 +34,8 @@ QJsonArray tracks(const std::shared_ptr<TimelineItemModel> &timeline);
 JsonRpc::RpcResult editorState(qint64 revision, const QString &session);
 JsonRpc::RpcResult timelinePage(const QJsonObject &params, qint64 revision);
 JsonRpc::RpcResult recordings(const QJsonObject &params, qint64 revision);
+/** @brief One list_sources entry (docs/protocol.md §8.4b). */
+QJsonObject sourceObject(const std::shared_ptr<ProjectClip> &clip);
 /** @brief Every bin clip (recordings, music, images, titles…), for picking a source id (P1c). */
 JsonRpc::RpcResult sources(const QJsonObject &params, qint64 revision);
 

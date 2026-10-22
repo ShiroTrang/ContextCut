@@ -39,7 +39,7 @@ Mỗi lần khởi động, app ghi file **`bridge.json`** vào thư mục dữ 
 | Trình duyệt | Bắt tay có header `Origin` (mọi trang web đều gửi) bị từ chối ngay ở bước bắt tay (`QWebSocketServer::originAuthenticationRequired`). Client Python không gửi `Origin`. |
 | Token | Thông điệp đầu tiên phải là `auth` với đúng token (so sánh thời gian hằng). Sai token, thiếu token, hoặc gọi method khác trước khi `auth` → lỗi `unauthorized` rồi đóng socket (mã đóng `4401`). Không `auth` trong **5 giây** → đóng (`4408`). |
 | Giới hạn | Tối đa **8** socket cùng lúc (thừa → đóng `4429`). Thông điệp vào tối đa **4 MiB**. Không nhận frame nhị phân. |
-| Phạm vi | Chỉ có các method trong registry dưới đây. Không method nào chạy shell, đọc file tùy ý hay ghi đè file gốc. `import_media` (sau P1) chỉ nhận đuôi file media, đường dẫn được resolve và kiểm symlink. |
+| Phạm vi | Chỉ có các method trong registry dưới đây. Không method nào chạy shell, đọc file tùy ý hay ghi đè file gốc. `import_media` chỉ nhận đuôi file media, đường dẫn tuyệt đối, và từ chối đường đi qua symlink/shortcut/junction (§8.8). |
 
 ## 3. Khung thông điệp (JSON-RPC 2.0)
 
@@ -113,6 +113,7 @@ Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429
 | `apply_operations` | Một đợt op = một bước undo có nhãn | P1c |
 | `add_markers` | Thêm guide/marker để Nhan xem | P1c |
 | `undo_batch` | Hoàn tác đợt vừa áp dụng (khi còn là bước undo trên cùng) | P1c |
+| `import_media` | Nhập một file media vào bin (một bước undo) | P1c |
 
 ### 8.1 `auth` [P1a]
 
@@ -316,6 +317,14 @@ Thêm guide trên sequence đang mở, một bước undo (nhãn mặc định `
 ### 8.7 `undo_batch` [P1c]
 
 `{"batch_id": "5f0c…"}` → hoàn tác đợt (của `apply_operations` hoặc `add_markers`) **chỉ khi** đợt đó còn là bước undo trên cùng (giống bấm Ctrl+Z đúng một lần). Kết quả `{"revision", "undone": "<nhãn>"}`. Đã có bước khác chồng lên (người dùng sửa tay, đợt sau) hoặc đợt đã bị hoàn tác → `conflict`; `batch_id` lạ (kể cả của lần chạy app trước) → `not_found`. P5 mở rộng thành Giữ/Hoàn tác trong dock Hoạt động AI.
+
+### 8.8 `import_media` [P1c]
+
+`{"path": "D:/Nhạc/Can Can.mp3"}` → thêm file vào gốc bin như kéo thả (`ClipCreator::createClipFromFile`), một bước undo `"AI: nhập <tên file>"`, chờ Kdenlive nạp xong tối đa 20 giây (request khác xếp hàng trong lúc đó). Kết quả `{"batch_id", "revision", "source": {…như list_sources…}}`; `ready: false` nếu chưa nạp xong (xem lại `list_sources`).
+
+- `path` phải là đường dẫn tuyệt đối tới một file có thật, đuôi thuộc: video `mkv mp4 mov webm avi mpg mpeg m4v ts flv`, âm thanh `wav mp3 flac ogg oga m4a aac opus wma`, ảnh `png jpg jpeg webp bmp gif`. Sai → `invalid_params` (`field: "path"`).
+- Đường dẫn đã resolve (`canonicalFilePath`) phải trùng đường dẫn đưa vào (không phân biệt hoa thường): file hay thư mục cha là symlink, shortcut `.lnk` hay junction thì bị từ chối.
+- Nhập lại file đã có trong bin tạo thêm một clip (như Kdenlive); kiểm `list_sources` trước. `open_project` để P2.
 
 ## 9. Phiên bản
 
