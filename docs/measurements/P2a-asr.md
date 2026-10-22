@@ -38,6 +38,24 @@ Mốc gõ tay của Nhan trong Lyric Calibrator (`D:\SongMV\tools\lyric_calibrat
 
 `C:\Users\VuNhan\Videos\2026-07-10 00-24-05.mkv` (34 phút, 1 track trộn, không có mốc tay), job `transcribe` thật qua worker, `large-v3`: 375 s (Silero thấy 20,5 phút có tiếng; 5,4× thời gian thực), VRAM đỉnh 4451/6144 MiB, 555 câu, 3396 từ, bỏ 7 câu ảo giác, tinh chỉnh 236 đầu câu / 191 cuối câu. Chữ đọc được tốt (lời nói thường, có chửi thề).
 
+## Bản ghi OBS 5 track (22/10, chưa có mốc tay)
+
+Hai file Nhan quay, tên stream chung chung (`Track1`…`Track5`) nên `track_map` theo thứ tự OBS; đo âm lượng xác nhận khớp (1 trộn, 2 Mic, 3 Discord, 4 game, 5 trống). Job thật qua tool `transcribe` trên project `p2-thu`, app đang tạo proxy cùng lúc (VRAM nền 1,6–1,8 GB).
+
+| File | Model | Thời gian job | Từ (Mic + Discord) | VRAM đỉnh toàn card |
+| --- | --- | --- | --- | --- |
+| `Gaming.mkv` (20,5 phút, Minecraft + Discord; Silero: Mic 384 s, Discord 45 s có tiếng) | parakeet-ctc-vi | 114 s | 1230 | 5308 MiB |
+| | phowhisper-large | 147 s | 1538 (sau lọc) | 3974 MiB |
+| `DocVanKemNhacNen.mkv` (2,4 phút, đọc văn, nhạc nền lọt vào Mic; Discord im lặng) | parakeet-ctc-vi | 90 s (gồm nạp model khi CPU bận proxy) | 460 | 4870 MiB |
+| | phowhisper-large | 35 s | 456 (sau lọc) | 3942 MiB |
+
+Đọc số (chưa có WER vì chưa có lời chuẩn):
+
+- **Parakeet rụng phụ âm đầu ở lời nói nhanh**, dính phần còn lại vào từ trước: "Đâyá", "bộàn" (bộ ngàn), "khoảngảnỉ" (khoảng nghỉ), "thườngật" (thường nhật), "lng" (lặng). Lỗi nằm ở chính model: tắt `timestamps` vẫn ra y vậy; cắt đoạn 30/15 s đỡ vài chỗ nhưng không hết. Trên Gaming mất ~20% số từ so với PhoWhisper. Phụ đề có những chữ này là hỏng thấy rõ.
+- **PhoWhisper nghe đúng chữ hơn hẳn** ("đi bộ hai ngàn block", "quái nó sinh rồi", "creeper", "khung cửa sổ") nhưng chữ thường, không dấu câu, và bịa câu kiểu báo chí ở đuôi chunk (13–20 âm tiết trong < 0,8 s, `no_speech_prob` ≈ 0): Gaming có 9 câu như vậy, DocVan 1. Đã lọc theo tốc độ nói (≥ 6 âm tiết và > 15 âm tiết/giây) và bỏ token `unk` (commit `aa799f397a`); kiểm tay 9/9 câu bị bỏ đều là bịa.
+- Hai file đều cho thấy hướng **chữ PhoWhisper + mốc Parakeet** (dưới đây) đáng làm; mặc định vẫn tạm `parakeet-ctc-vi` tới khi có mốc tay.
+- `DocVanKemNhacNen.mkv` là bài đọc có sẵn văn bản: có văn bản gốc thì tính được WER chính xác cho cả 3 model mà không cần gõ mốc.
+
 ## Quyết định tạm
 
 Quy tắc của kế hoạch: chọn WER thấp hơn, miễn trung vị lệch đầu/cuối câu sau tinh chỉnh < 100 ms. Trên bộ bài hát chỉ `parakeet-ctc-vi` đạt điều kiện thời gian → **mặc định tạm = `parakeet-ctc-vi`**, máy thiếu thì lùi `phowhisper-large` rồi `large-v3` (`asr.PREFERENCE`, `asr.default_model()`). Chốt lại trên bản ghi OBS của Nhan (giọng nói thật, mốc có cả cuối từ).
