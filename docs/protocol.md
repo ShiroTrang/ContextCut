@@ -1,10 +1,10 @@
 # Giao thức cầu nối ContextCut (AI Bridge) — v1
 
-21/10/2026, cập nhật 22/10/2026 (P1c, P2a, P2b) · trạng thái: **hợp đồng cho P1–P2** (P1a, P1c, P2a, P2b cài; P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
+21/10/2026, cập nhật 22/10/2026 (P1c, P2a, P2b, P2c) · trạng thái: **hợp đồng cho P1–P2** (P1a, P1c, P2a, P2b, P2c cài; P1b dựa vào) · nguồn: design v3.1 §9, Kiến trúc v3 mục "AI chỉnh trực tiếp và nhìn video", "Timeline và thao tác", "Bảo mật".
 
 App ContextCut (C++) mở một server WebSocket cục bộ. Dịch vụ Python `contextcut-ai` (MCP server) là client duy nhất dự kiến; AI client (Claude, Codex, Antigravity) không nói chuyện thẳng với cầu nối. Tài liệu này là hợp đồng giữa hai bên: đổi thứ gì ở đây thì tăng `protocol` hoặc ghi rõ là trường mới không bắt buộc.
 
-Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026); **[P2a]** cài ở P2a; **[P2b]** cài ở P2b.
+Ký hiệu: **[P1a]** cài ở P1a; **[P1c]** cài ở P1c (22/10/2026); **[P2a]** cài ở P2a; **[P2b]** cài ở P2b; **[P2c]** cài ở P2c.
 
 ## 1. Tìm app và kết nối
 
@@ -71,7 +71,7 @@ Mỗi frame text là một object JSON-RPC 2.0. Không hỗ trợ batch (mảng)
 | -32002 | `no_project` | Chưa có project/timeline nào mở | |
 | -32003 | `conflict` | `base_revision` khác revision hiện tại; `undo_batch` khi đợt không còn là bước undo trên cùng **[P1c]** | `current_revision` |
 | -32004 | `stale_cursor` | `cursor` thuộc revision cũ hoặc sai dạng | `current_revision` |
-| -32005 | `busy` | Project đang nạp hoặc đang đóng | |
+| -32005 | `busy` | Project đang nạp hoặc đang đóng; đang mở project khác (`open_project`, message nói lý do) **[P2c]**; quá số hộp xác nhận | |
 | -32006 | `validation_failed` | Ops không hợp lệ, chưa đổi gì **[P1c]** | `errors[]` |
 | -32007 | `apply_failed` | Một op lỗi giữa chừng, cả đợt đã hoàn tác **[P1c]** | `op_index`, `field`, `reason` |
 | -32008 | `not_found` | Id clip/track/sequence không tồn tại | `id` |
@@ -117,6 +117,8 @@ Mã đóng WebSocket: `4401` sai/thiếu token, `4408` hết giờ `auth`, `4429
 | `list_subtitles` | Phụ đề trên track phụ đề của sequence đang mở; phân trang | P2a |
 | `get_scene` | XML MLT của sequence đang mở như khi xuất (để `melt` dựng khung hình, xuất file) | P2b |
 | `get_viewer_frame` | Khung hình monitor đang hiện (JPEG), tuỳ chọn dời playhead trước | P2b |
+| `request_confirmation`, `get_confirmation`, `cancel_confirmation` | Hộp hỏi người dùng trong app (xuất file) và câu trả lời | P2c |
+| `open_project`, `get_open_status` | Mở một file `.kdenlive` (hộp lưu/khôi phục của Kdenlive hỏi người dùng) và theo dõi | P2c |
 
 ### 8.1 `auth` [P1a]
 
@@ -331,7 +333,7 @@ Thêm guide trên sequence đang mở, một bước undo (nhãn mặc định `
 
 - `path` phải là đường dẫn tuyệt đối tới một file có thật, đuôi thuộc: video `mkv mp4 mov webm avi mpg mpeg m4v ts flv`, âm thanh `wav mp3 flac ogg oga m4a aac opus wma`, ảnh `png jpg jpeg webp bmp gif`. Sai → `invalid_params` (`field: "path"`).
 - Đường dẫn đã resolve (`canonicalFilePath`) phải trùng đường dẫn đưa vào (không phân biệt hoa thường): file hay thư mục cha là symlink, shortcut `.lnk` hay junction thì bị từ chối.
-- Nhập lại file đã có trong bin tạo thêm một clip (như Kdenlive); kiểm `list_sources` trước. `open_project` để P2.
+- Nhập lại file đã có trong bin tạo thêm một clip (như Kdenlive); kiểm `list_sources` trước. Mở project: §8.13.
 
 ### 8.9 `list_subtitles` [P2a]
 
@@ -384,6 +386,55 @@ Tham số (đều không bắt buộc):
 - Ảnh là khung monitor đang hiện, như lệnh Extract Frame của Kdenlive (`MonitorProxy::extractFrame`): cùng proxy và hiệu ứng người dùng đang xem. Monitor clip: `clip` = `{"source", "name"}` của clip đang mở, `position_f` là frame trong clip đó; chưa mở clip nào → `not_found`.
 - `at_f` kèm `monitor: "clip"` → `invalid_params`. Dời playhead không đổi `revision`.
 - Ảnh trả trong JSON (`data` base64); app không ghi file.
+
+### 8.12 Xác nhận trong app: `request_confirmation`, `get_confirmation`, `cancel_confirmation` [P2c]
+
+Việc cần người dùng đồng ý **trong app** (design: xuất file; sau này cắt bỏ vượt ngưỡng, asset ngoài). App hiện một hộp **không-modal** nằm trên cửa sổ chính và trả lời ngay; cầu nối không bị chặn trong lúc chờ. Chữ trong hộp do app soạn từ các trường có cấu trúc (không nhận chữ tự do từ AI). Nút mặc định (Enter, Esc) là **từ chối**; nút đồng ý tắt 1,5 giây đầu để phím đang gõ dở không bấm nhầm.
+
+`request_confirmation` tham số (P2c chỉ có `kind: "export"`):
+
+| Tên | Kiểu | Ghi chú |
+| --- | --- | --- |
+| `kind` | `"export"` | |
+| `output` | string | Đường dẫn tuyệt đối file sẽ ghi, đuôi `.mp4`. Trùng file của một clip trong bin (gốc hoặc proxy) hay file project đang mở → `invalid_params` (`field: "output"`) |
+| `start_f`, `end_f` | int | Khoảng xuất `[start_f, end_f)`, `0 ≤ start_f < end_f ≤ độ dài sequence` |
+| `preset` | string | Tên hiện trong hộp (`youtube-1080p60`, `project`) |
+| `encoder` | `"auto"` \| `"nvenc"` \| `"x264"` | |
+| `overwrite` | bool | `true`: hộp ghi rõ "GHI ĐÈ file có sẵn" |
+
+```json
+{"confirm_id": "c-5f0c…", "state": "pending", "revision": 1873460}
+```
+
+Tối đa 4 hộp chờ cùng lúc (thêm → `busy`). Chưa có project → `no_project`.
+
+`get_confirmation{confirm_id}` → `{"confirm_id", "state", "revision"}`: `state` ∈ `pending` (chưa trả lời), `accepted`, `rejected` (bấm "Không xuất" hoặc đóng hộp), `expired` (15 phút không trả lời, hộp tự đóng), `cancelled` (`cancel_confirmation`). `revision` là revision lúc người dùng trả lời (`null` khi còn chờ). Id lạ (kể cả của lần chạy app trước) → `not_found`.
+
+`cancel_confirmation{confirm_id}` → đóng hộp nếu còn chờ; trả như `get_confirmation`.
+
+Xuất file thật do `contextcut-ai` làm (melt trên `get_scene`), **chỉ sau** `accepted`.
+
+### 8.13 `open_project`, `get_open_status` [P2c]
+
+`open_project{path}`:
+
+- `path` tuyệt đối, đuôi `.kdenlive`, file có thật, đường dẫn đã resolve trùng đường dẫn đưa vào (không qua symlink/shortcut/junction); sai → `invalid_params` (`field: "path"`).
+- Trùng project đang mở → `{"request_id": null, "state": "opened", "already_open": true, "path", "modified"}`.
+- Không thì app **xếp** việc mở vào vòng sự kiện chính (như Nhan bấm File › Open) và trả ngay `{"request_id", "state": "pending", "path", "modified"}`; `modified: true` nghĩa là project hiện tại có thay đổi chưa lưu và Kdenlive sẽ hỏi "Save changes?" (Save / Don't Save / Cancel). Hộp File Recovery, file thiếu… cũng do Kdenlive hỏi người dùng. App không tự chọn thay người dùng.
+- Trong lúc mở, cầu nối chỉ nhận `auth`, `get_open_status`, `get_confirmation`, `cancel_confirmation`; method khác → `busy` (message nói đang mở project nào). Đang có một lần mở khác → `busy`.
+
+`get_open_status{request_id}` →
+
+```json
+{"request_id": "o-91ab…", "state": "pending", "path": "D:/Videos/Tập 2.kdenlive",
+ "dialog": {"title": "Warning — ContextCut", "text": "The project \"Tập 1.kdenlive\" has been changed. Do you want to save your changes?"},
+ "message": null}
+```
+
+- `state`: `pending`; `opened` (project mới đang mở); `cancelled` (người dùng bấm Cancel ở hộp lưu, hoặc lưu thất bại, hoặc app đang chạy tác vụ không cho đóng project: project cũ **còn nguyên**); `failed` (Kdenlive không mở được file; project cũ đã đóng theo lựa chọn của người dùng, app mở project trống).
+- `dialog`: hộp thoại modal đang hiện trong app (tiêu đề + chữ) khi `pending`, để agent nói người dùng đang được hỏi gì; `null` nếu không có.
+- Chỉ nhớ lần mở gần nhất; id khác → `not_found`.
+- Đổi project làm mọi id clip/track/đợt (`batch_id`) của project cũ hết giá trị; `revision` đổi.
 
 ## 9. Phiên bản
 
