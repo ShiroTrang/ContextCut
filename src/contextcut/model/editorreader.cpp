@@ -91,6 +91,15 @@ bool isRecording(ClipType::ProducerType type)
     return type == ClipType::AV || type == ClipType::Video;
 }
 
+/** Kdenlive is still loading the clip. ClipController's constructor takes the producer lock for writing on the GUI thread and
+    only setProducer() or setInvalid(), which ClipLoadTask queues back to the GUI thread, release it, so any getter that
+    read-locks it (duration, fps, frame size, int properties) would block the GUI thread for good. Leave those fields out,
+    as ProjectClip::hash() does for StatusWaiting. */
+bool stillLoading(const std::shared_ptr<ProjectClip> &clip)
+{
+    return clip->clipStatus() == FileStatus::StatusWaiting;
+}
+
 QList<int> orderedTrackIds(const std::shared_ptr<TimelineItemModel> &timeline)
 {
     const auto ids = timeline->getAllTracksIds();
@@ -506,7 +515,8 @@ JsonRpc::RpcResult recordings(const QJsonObject &params, qint64 revision)
                                            {QStringLiteral("channels"), channels.value(it.key(), 0)}});
             }
         }
-        const QSize size = clip->getFrameSize();
+        const bool loading = stillLoading(clip);
+        const QSize size = loading ? QSize() : clip->getFrameSize();
         list.append(QJsonObject{
             {QStringLiteral("id"), clip->clipId()},
             {QStringLiteral("name"), clip->clipName()},
@@ -514,8 +524,8 @@ JsonRpc::RpcResult recordings(const QJsonObject &params, qint64 revision)
             {QStringLiteral("file_hash"), nullIfEmpty(clip->hash())},
             {QStringLiteral("type"), clipTypeName(clip->clipType())},
             {QStringLiteral("ready"), clip->statusReady()},
-            {QStringLiteral("duration_f"), qint64(clip->frameDuration())},
-            {QStringLiteral("source_fps"), clip->getOriginalFps()},
+            {QStringLiteral("duration_f"), loading ? QJsonValue(QJsonValue::Null) : QJsonValue(qint64(clip->frameDuration()))},
+            {QStringLiteral("source_fps"), loading ? QJsonValue(QJsonValue::Null) : QJsonValue(clip->getOriginalFps())},
             {QStringLiteral("width"), size.isValid() ? QJsonValue(size.width()) : QJsonValue(QJsonValue::Null)},
             {QStringLiteral("height"), size.isValid() ? QJsonValue(size.height()) : QJsonValue(QJsonValue::Null)},
             {QStringLiteral("audio_streams"), streams},
@@ -535,7 +545,8 @@ QJsonObject sourceObject(const std::shared_ptr<ProjectClip> &clip)
             {QStringLiteral("name"), clip->clipName()},
             {QStringLiteral("type"), clipTypeName(clip->clipType())},
             {QStringLiteral("path"), nullIfEmpty(clip->url())},
-            {QStringLiteral("duration_f"), clip->hasLimitedDuration() ? QJsonValue(qint64(clip->frameDuration())) : QJsonValue(QJsonValue::Null)},
+            {QStringLiteral("duration_f"),
+             !stillLoading(clip) && clip->hasLimitedDuration() ? QJsonValue(qint64(clip->frameDuration())) : QJsonValue(QJsonValue::Null)},
             {QStringLiteral("has_video"), clip->hasVideo()},
             {QStringLiteral("has_audio"), clip->hasAudio()},
             {QStringLiteral("ready"), clip->statusReady()},

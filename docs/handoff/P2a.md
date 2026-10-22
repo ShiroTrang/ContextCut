@@ -67,7 +67,7 @@ uv run --directory contextcut-ai --no-sync python tools/asr_eval.py --calibratio
 ## Việc tiếp
 
 1. Nhan: bản ghi OBS 5 track + mốc gõ tay → chạy cổng (lệnh ở trên), chốt model mặc định.
-2. ~~Sửa treo proxy HEVC của Kdenlive~~ — xong (mục cuối). Còn: deadlock cầu nối khi clip nạp lỗi (mục cuối, "Phát hiện phụ").
+2. ~~Sửa treo proxy HEVC của Kdenlive~~ — xong. ~~Deadlock cầu nối khi clip đang nạp~~ — xong (hai mục cuối).
 3. Nhắc Nhan chạy `uv run --directory contextcut-ai python scripts/register_clients.py` (skill đã cài vẫn là bản P1b: agent báo "Skill không load được") và đóng client trước `uv sync`.
 4. Review toàn nhánh P2a (chưa làm) trước khi push; hỏi Nhan trước khi push.
 5. P2b theo `docs/plans/P2.md`.
@@ -89,6 +89,23 @@ uv run --directory contextcut-ai --no-sync python tools/asr_eval.py --calibratio
 
 Tái hiện lại (khi merge bản KDE Gear mới, kiểm patch còn cần không): fixture `p1-gate`, sửa `kdenlive:docproperties.proxyparams` thêm ` -loglevel debug`, thêm `safeFFmpegParams=loglevel` vào nhóm `[env]` của `%LOCALAPPDATA%\contextcutrc` (không thì hộp cảnh báo tham số lạ khi mở project; gỡ dòng này sau khi thử), mở app với `-i "<đoạn HEVC chưa có proxy>"`. Proxy lưu ở `%LOCALAPPDATA%\contextcut\cache\proxy\<hash>.mov`; file đã có proxy thì không tạo lại — cắt đoạn mới (hash khác) cho mỗi lần thử.
 
-**Phát hiện phụ (chưa sửa, ngoài phạm vi):** cầu nối có thể **deadlock** luồng giao diện khi clip nạp lỗi. Gặp khi lỡ nhập cả thư mục repo (file `.a`, `.ico`…): luồng giao diện ở `EditorReader::sources` → `ProjectClip::frameDuration()` → `ClipController::getFramePlaytime()` chờ khoá producer, còn các `ClipLoadTask::abort()` trong worker chờ luồng giao diện qua `BlockingQueuedConnection`. Với dữ liệu thật có thể xảy ra khi agent gọi `list_sources` lúc một file hỏng/đang ghi dở đang nạp. Các job Kdenlive khác cùng kiểu kết nối với proxy ghi ở `patches.md` ("Biết trước").
+**Phát hiện phụ (đã sửa ở mục sau):** cầu nối có thể **deadlock** luồng giao diện khi clip nạp lỗi. Gặp khi lỡ nhập cả thư mục repo (file `.a`, `.ico`…): luồng giao diện ở `EditorReader::sources` → `ProjectClip::frameDuration()` → `ClipController::getFramePlaytime()` chờ khoá producer, còn các `ClipLoadTask::abort()` trong worker chờ luồng giao diện qua `BlockingQueuedConnection`. Với dữ liệu thật có thể xảy ra khi agent gọi `list_sources` lúc một file hỏng/đang ghi dở đang nạp. Các job Kdenlive khác cùng kiểu kết nối với proxy ghi ở `patches.md` ("Biết trước").
 
 Bẫy mới: `-i` của app với một mục rỗng (vd. `",a.mkv"`) nhập **cả thư mục hiện tại, đệ quy**; PowerShell 5.1 đọc `.ps1` UTF-8 không BOM như ANSI (tên có dấu trong script thành rác); chạy bản sao `stage` ở thư mục khác ghi `mltpath` của nó vào `contextcutrc` (sửa lại về `stage\share\mlt\profiles`).
+
+## Sửa deadlock cầu nối khi clip đang nạp (22/10/2026, session riêng)
+
+**Nguyên nhân (đã chứng minh):** khi một clip vào bin (nhập file, mở project, `import_media`), `ProjectClip(id, description…)` dựng `ClipController` không kèm producer, và hàm dựng đó gọi `m_producerLock.lockForWrite()` (`clipcontroller.cpp:63`) **trên luồng giao diện**. Khoá chỉ nhả trong `addMasterProducer()` (qua `ProjectClip::setProducer`, nạp được) hoặc `ProjectClip::setInvalid()` (nạp hỏng). `ClipLoadTask` gọi cả hai bằng `BlockingQueuedConnection` về luồng giao diện. Trong khoảng đó clip ở `StatusWaiting`. Cầu nối chạy trên luồng giao diện: `list_sources` gọi `frameDuration()` → `getFramePlaytime()` → `QReadLocker`. Qt không cho luồng đang giữ khoá ghi lấy khoá đọc, kể cả ở chế độ `Recursive` (chương trình thử với Qt 6.11.2: `lockForWrite()` rồi `tryLockForRead(2000)` cùng luồng → `false`). Vì vậy luồng giao diện tự khoá chính nó, còn `ClipLoadTask` chờ luồng giao diện mãi. **Clip tốt cũng bị**, không riêng clip hỏng: chỉ cần gọi trong lúc clip đang nạp. Cũng dính: `getFrameSize()`, `getOriginalFps()` (`list_recordings`), `hasLimitedDuration()` của slideshow, và `import_media` khi nạp quá 20 s (trả `sourceObject` của clip còn đang nạp). Op sửa thì không dính, vì `checkSource` kiểm `statusReady()` trước. Kdenlive tự né bằng cách kiểm `StatusWaiting` (`ProjectClip::hash()`, `getThumbProducer()`), nên không vá mã gốc mà ghi vào `patches.md` ("Biết trước").
+
+**Sửa** (`src/contextcut/model/editorreader.cpp`): thêm `stillLoading(clip)` (`clipStatus() == StatusWaiting`). Clip đang nạp thì `list_sources`/`import_media` trả `duration_f: null`; `list_recordings` trả `duration_f`, `source_fps`, `width`, `height` là `null` (`audio_streams` vốn rỗng lúc đó), không gọi getter nào có khoá. `ready: false` như trước. Đã cập nhật `docs/protocol.md` §8.4/§8.4b; `protocol` vẫn là 1, vì trước đây trường này không bao giờ trả về được (app treo). Phía Python chỉ đọc `id`/`path` của bản ghi nên không phải sửa.
+
+**Bằng chứng** (build Release, fixture `p1-gate` mới mỗi lần; script gọi `list_sources` liên tục qua một kết nối `bridge_probe.Bridge`, hết giờ 8 s thì báo HANG; bản sao ở thư mục ghi chú session `local_da273b71…/hammer.py`):
+
+| Kiểm | Trước sửa | Sau sửa |
+| --- | --- | --- |
+| Nhập 1 file nhị phân đổi đuôi `junk01.mkv` (4 MB ngẫu nhiên) | **2/2 treo**: lần gọi thứ 13, ~14–17 s sau khi mở app, "Not Responding"; gdb: thread 1 `EditorReader::sources` → `sourceObject` → `ProjectClip::frameDuration` → `ClipController::getFramePlaytime` → Qt6Core chờ; một luồng pool `ClipLoadTask::run` → `abort`; không luồng nào khác chạm `ClipController` | 105 923 lần gọi trong 45 s, không treo; thấy clip `ready: false` rồi bị gỡ; app phản hồi |
+| Nhập 12 clip **tốt** (H.264 3 s) | **treo** ở lần gọi thứ 16 | `list_sources` + `list_recordings` song song: ~27 500 lần gọi mỗi method trong 45 s, không treo; 1–2 clip `ready: false` mỗi lúc rồi đủ 17 nguồn |
+| Nhập 30 file hỏng + bản ghi fixture cắt còn 1/3 (`dang-ghi.mkv`) | — | hai method song song, ~61 300 lần gọi mỗi method trong 60 s, không treo; tới 13 clip cùng nạp; 30 file hỏng bị gỡ, bản ghi cắt cụt nạp được |
+| `uv run --directory contextcut-ai --no-sync pytest -m live` (p1-gate + OBS giả + `stereo.flac`) | — | **39/39 xanh** (cả `test_read_tools_over_stdio`); `bridge_probe check --quick` OK |
+
+Tái hiện lại (khi merge bản KDE Gear mới hay thêm code đọc clip bin): fixture `p1-gate`, mở app với `-i "<file nhị phân đổi đuôi .mkv>"` hoặc vài clip mới, và gọi `list_sources` liên tục ngay lúc app mở. Code ContextCut mới mà gọi getter của `ProjectClip`/`ClipController` có `QReadLocker` phải kiểm `stillLoading()` hoặc `statusReady()` trước.

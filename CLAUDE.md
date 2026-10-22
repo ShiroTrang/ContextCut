@@ -66,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Kdenlive treo khi tạo proxy (bản ghi OBS HEVC; luồng giao diện kẹt trong `ProxyTask::processLogInfo`): `QProcess` bị đọc chéo luồng. **Đã vá** (`proxytask.cpp`, `patches.md`); cách tái hiện chắc chắn (`-loglevel debug` trong `proxyparams`) ở cuối `docs/handoff/P2a.md`. Các job Kdenlive khác cùng kiểu kết nối chưa vá.
 - `-i` với một mục rỗng (`",a.mkv"`) nhập **cả thư mục hiện tại, đệ quy**. PowerShell 5.1 đọc `.ps1` UTF-8 không BOM như ANSI: đừng để tên có dấu trong script.
 - Chạy bản sao `stage` ở thư mục khác thì nó ghi `mltpath` của nó vào `contextcutrc`; sửa lại về `…/contextcut/stage/share/mlt/profiles`.
-- Cầu nối có thể deadlock luồng giao diện khi một clip nạp lỗi (`EditorReader::sources` chờ khoá producer, `ClipLoadTask::abort` chờ luồng giao diện); chưa sửa (`docs/handoff/P2a.md`).
+- Clip bin đang nạp (`StatusWaiting`, tốt hay hỏng đều vậy) bị Kdenlive khoá ghi producer trên luồng giao diện tới khi nạp xong: cầu nối gọi `frameDuration()`, `getFrameSize()`, `getOriginalFps()`, `getProducerIntProperty()`… trên clip đó là app treo vĩnh viễn. Kiểm `clipStatus() != StatusWaiting` hoặc `statusReady()` trước (`stillLoading` trong `editorreader.cpp`; `patches.md`, `docs/handoff/P2a.md`).
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn

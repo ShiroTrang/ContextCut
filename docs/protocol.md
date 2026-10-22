@@ -225,7 +225,7 @@ Tham số: `limit` (1…500, mặc định 100), `cursor`.
 - `id` = `kdenlive:id` của bin clip, ổn định giữa các lần mở; mọi dữ liệu phân tích (transcript, sự kiện, khoảnh khắc) về sau mang id này.
 - `audio_streams[].index` là chỉ số stream MLT (đếm cả stream hình, nên OBS track 1 thường là `index: 1`); `name` là mô tả Kdenlive (`Mono 48kHz aac`) hoặc tên người dùng đặt trong Kdenlive. Tên track OBS ghi trong file (Mic, Discord…) chưa đọc ở P1a; P2 đọc bằng ffprobe khi dựng `track_map`.
 - `file_hash` = hash Kdenlive tính trên phần đầu và cuối file (dùng làm khoá cache phân tích); `null` nếu file thiếu.
-- `duration_f` tính theo fps của project. `ready` là `false` khi Kdenlive chưa nạp xong clip (các trường kích thước, stream có thể chưa đúng).
+- `duration_f` tính theo fps của project. `ready` là `false` khi Kdenlive chưa nạp xong clip (các trường kích thước, stream có thể chưa đúng). Trong lúc clip còn đang nạp, `duration_f`, `source_fps`, `width`, `height` là `null` và `audio_streams` có thể rỗng: app không đọc producer của clip đang nạp, vì Kdenlive khoá nó cho tới khi nạp xong.
 - Composition: `name` là tên hiển thị, `asset` là id asset Kdenlive (`luma`, `qtblend`…).
 - `track_map` (P2: track nào là Mic/Discord/Game) và `day_start` (P7) là `null` cho tới khi các giai đoạn đó lưu chúng vào `MyVideo.contextcut/recordings.json`.
 
@@ -240,7 +240,7 @@ Như `list_recordings` (`limit` 1…500, mặc định 100, `cursor`) nhưng g�
  "next_cursor": null}
 ```
 
-`duration_f` là `null` với nguồn không giới hạn độ dài (màu, ảnh tĩnh kéo dài tuỳ ý); `recording` như định nghĩa ở §8.4.
+`duration_f` là `null` với nguồn không giới hạn độ dài (màu, ảnh tĩnh kéo dài tuỳ ý) và với clip đang nạp (`ready: false`, như §8.4); `recording` như định nghĩa ở §8.4.
 
 ### 8.5 Sửa timeline: `list_operations`, `validate_operations`, `apply_operations` [P1c]
 
