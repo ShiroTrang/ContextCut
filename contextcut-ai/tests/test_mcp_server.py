@@ -1,12 +1,18 @@
 # SPDX-FileCopyrightText: 2026 ContextCut contributors
 # SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+import copy
 import json
+import sys
+from pathlib import Path
 
 import pytest
-from fake_bridge import EDITOR_STATE, rpc_error
+from fake_bridge import EDITOR_STATE, RECORDINGS, rpc_error
 from mcp import Client
 
-from contextcut_ai import guide
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from p2_fixture import make_obs_mkv  # noqa: E402
+
+from contextcut_ai import guide, trackmap
 from contextcut_ai.bridge_client import BridgeClient
 from contextcut_ai.mcp_server import build_server
 
@@ -26,7 +32,7 @@ def text_of(result) -> str:
 
 READ_TOOLS = {"get_editor_state", "get_timeline", "list_recordings", "list_sources", "get_guide", "list_operations",
               "validate_operations"}
-EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media"}
+EDIT_TOOLS = {"apply_operations", "undo_batch", "add_markers", "import_media", "set_track_map"}
 
 
 async def test_lists_tools(mcp):
@@ -65,6 +71,7 @@ async def test_get_timeline_sends_only_given_params(mcp, bridge):
         ("get_timeline", {"start_f": 600, "tracks": ["V1", 7], "limit": 100}),
         ("get_timeline", {"limit": 5, "cursor": "5.100"}),
         ("list_recordings", {}),
+        ("get_editor_state", None),  # thư mục đi kèm project, để gắn track_map
     ]
 
 
@@ -203,3 +210,51 @@ async def test_apply_not_resent_when_app_drops(mcp, bridge):
                                                       "base_revision": 1, "label": "AI: x"})
     assert result.is_error and "có thể đã được áp dụng" in text_of(result)
     assert [m for m, _ in bridge.calls].count("apply_operations") == 1
+
+
+def with_companion(bridge, companion: Path, rec_path: Path | None = None) -> None:
+    state = copy.deepcopy(EDITOR_STATE)
+    state["project"]["companion_dir"] = companion.as_posix()
+    bridge.responses["get_editor_state"] = state
+    if rec_path is not None:
+        recs = copy.deepcopy(RECORDINGS)
+        recs["recordings"][0]["path"] = rec_path.as_posix()
+        bridge.responses["list_recordings"] = recs
+
+
+@pytest.fixture(scope="module")
+def obs_mkv(tmp_path_factory) -> Path:
+    return make_obs_mkv(tmp_path_factory.mktemp("rec") / "Ông Sang câu con cá.mkv", seconds=3)
+
+
+async def test_list_recordings_adds_known_track_map(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "Bắt Nạt Hải Sản.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    out = json.loads(text_of(await mcp.call_tool("list_recordings", {})))
+    assert out["recordings"][0]["track_map"] is None  # chưa probe: không tự chạy ffprobe khi liệt kê
+    trackmap.RecordingStore(companion).ensure("4", obs_mkv)
+    out = json.loads(text_of(await mcp.call_tool("list_recordings", {})))
+    assert [e["role"] for e in out["recordings"][0]["track_map"]] == ["mix", "mic", "discord", "game", "desktop"]
+
+
+async def test_set_track_map_tool(mcp, bridge, tmp_path, obs_mkv):
+    companion = tmp_path / "P.contextcut"
+    with_companion(bridge, companion, obs_mkv)
+    result = await mcp.call_tool("set_track_map", {"recording": "4", "tracks": [
+        {"index": 1, "role": "mix"}, {"index": 2, "role": "mic"}, {"index": 3, "role": "discord", "speaker": "Sang"}]})
+    assert not result.is_error, text_of(result)
+    out = json.loads(text_of(result))
+    assert [(e["role"], e["speaker"]) for e in out["track_map"]] == [("mix", None), ("mic", "Nhan"), ("discord", "Sang")]
+    assert trackmap.RecordingStore(companion).get("4")["track_map"] == out["track_map"]
+    bad = await mcp.call_tool("set_track_map", {"recording": "4", "tracks": [{"index": 9, "role": "mic"}]})
+    assert bad.is_error and "index 9" in text_of(bad)
+    missing = await mcp.call_tool("set_track_map", {"recording": "77", "tracks": [{"index": 1, "role": "mix"}]})
+    assert missing.is_error and "77" in text_of(missing)
+
+
+async def test_set_track_map_unsaved_project(mcp, bridge):
+    state = copy.deepcopy(EDITOR_STATE)
+    state["project"].update(path=None, companion_dir=None)
+    bridge.responses["get_editor_state"] = state
+    result = await mcp.call_tool("set_track_map", {"recording": "4", "tracks": [{"index": 1, "role": "mix"}]})
+    assert result.is_error and "Lưu project trước" in text_of(result)

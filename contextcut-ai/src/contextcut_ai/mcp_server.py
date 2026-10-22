@@ -15,7 +15,7 @@ from mcp.server.mcpserver.resources import TextResource
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import __version__, guide
+from . import __version__, guide, paths, trackmap
 from .bridge_client import BridgeClient
 from .errors import BridgeError, RpcError, agent_message
 
@@ -23,6 +23,8 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 # Sửa được hoàn tác (Ctrl+Z) nhưng có thể xoá clip khỏi timeline
 DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
 ADDITIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+# Ghi dữ liệu của ContextCut (thư mục .contextcut), không đụng timeline
+PROJECT_DATA = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 
 OPS_SUMMARY = (
     "Op (frame nguyên, khoảng nửa mở, mọi op nhận reason): "
@@ -79,6 +81,28 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
     def present(**params: Any) -> dict[str, Any]:
         return {k: v for k, v in params.items() if v is not None}
 
+    async def bridge_call(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            return await bridge.call(method, params)
+        except (BridgeError, RpcError) as e:
+            raise ToolError(agent_message(e)) from e
+
+    async def companion() -> Any:
+        try:
+            return paths.companion_dir(await bridge_call("get_editor_state"))
+        except paths.ProjectNotSaved as e:
+            raise ToolError(str(e)) from e
+
+    async def find_recording(rec_id: str) -> dict[str, Any]:
+        cursor = None
+        while True:
+            page = await bridge_call("list_recordings", present(limit=500, cursor=cursor))
+            for rec in page["recordings"]:
+                if rec["id"] == rec_id:
+                    return rec
+            if not (cursor := page.get("next_cursor")):
+                raise ToolError(f"Không có bản ghi id {rec_id!r} trong project (xem list_recordings).")
+
     @read_tool
     async def get_editor_state() -> str:
         """Trạng thái ContextCut: project, fps (phân số num/den), kích thước, sequence, playhead_f, vùng chọn,
@@ -106,8 +130,19 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         cursor: Annotated[str | None, Field(description="next_cursor của trang trước")] = None,
     ) -> str:
         """Các bản ghi (video nguồn, thường là file OBS) của project: id ổn định, đường dẫn, hash, độ dài theo frame
-        project, fps nguồn, kích thước, stream audio, đã lên timeline chưa."""
-        return await call("list_recordings", present(limit=limit, cursor=cursor))
+        project, fps nguồn, kích thước, stream audio, đã lên timeline chưa, track_map (stream nào là Mic/Discord/Game;
+        null tới khi transcribe hoặc set_track_map lần đầu)."""
+        result = await bridge_call("list_recordings", present(limit=limit, cursor=cursor))
+        if result.get("recordings"):
+            try:
+                store = trackmap.RecordingStore(paths.companion_dir(await bridge_call("get_editor_state")))
+            except paths.ProjectNotSaved:
+                store = None
+            for rec in result["recordings"]:
+                known = store.get(rec["id"]) if store else None
+                if known and known["path"] == rec.get("path"):
+                    rec["track_map"] = known["track_map"]
+        return compact(result)
 
     @read_tool
     async def list_sources(
@@ -171,6 +206,25 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         """Nhập một file media (video, nhạc, SFX, ảnh) vào bin để dùng làm source; một bước undo. Chỉ nhận đuôi media,
         không nhận file qua symlink. Trả source (id, độ dài, ready); chưa ready thì đợi rồi xem list_sources."""
         return await call("import_media", {"path": path}, resend=False)
+
+    @tool(PROJECT_DATA)
+    async def set_track_map(
+        recording: Annotated[str, Field(min_length=1, description="id bản ghi (list_recordings)")],
+        tracks: Annotated[list[dict[str, Any]], Field(min_length=1, max_length=32, description=(
+            '[{"index": 2, "role": "mic", "speaker": "Nhan", "transcribe": true}]; index = audio_streams[].index; '
+            "role: mix | mic | discord | game | desktop | other; speaker mặc định mic → Nhan, discord → bạn bè"))],
+    ) -> str:
+        """Sửa sơ đồ track audio của một bản ghi (stream nào là Mic của Nhan, Discord của bạn bè, game…). Mặc định
+        ContextCut đoán theo tên stream rồi theo thứ tự OBS (1 trộn chung, 2 Mic, 3 Discord, 4 game, 5 desktop).
+        Chỉ track transcribe=true được phiên âm. Lưu vào <project>.contextcut/recordings.json."""
+        store = trackmap.RecordingStore(await companion())
+        rec = await find_recording(recording)
+        try:
+            store.ensure(recording, rec["path"])
+            updated = store.set_track_map(recording, tracks)
+        except (ValueError, OSError) as e:
+            raise ToolError(str(e)) from e
+        return compact({"recording": recording, "track_map": updated["track_map"]})
 
     def get_guide(
         topic: Annotated[str | None, Field(description="Ví dụ workflow, styles/gaming; bỏ trống để xem mục lục")] = None,
