@@ -28,6 +28,16 @@ Gốc upstream: tag `v26.08.2` (`ef54398259f2af1d29095a798cab48ca4c52f141`).
 | `src/core.cpp` (`initGUI`) | `#include "contextcut/bridge/aibridgeserver.h"` + một dòng `ContextCut::AiBridgeServer::start(m_mainWindow);` ngay sau `m_mainWindow = new MainWindow();` | Khởi động cầu nối AI (WebSocket `127.0.0.1` + token, `docs/protocol.md`). Không có hook nào khác; app vẫn chạy nếu cầu nối không mở được cổng | P1a |
 | `src/CMakeLists.txt` | `add_subdirectory(contextcut)`; sau khối link Qt: `find_package(Qt6 … WebSockets)` + `target_link_libraries(kdenliveLib PUBLIC Qt6::WebSockets)` | Biên dịch `src/contextcut/` vào `kdenliveLib` như các thư mục con khác; cầu nối dùng `QWebSocketServer` | P1a |
 
+## Phụ thuộc API nội bộ (không phải patch)
+
+`src/contextcut/ops/timelineaccess.h` gọi vài thành viên `protected` của Kdenlive qua lớp dẫn xuất (con trỏ-tới-thành-viên), không sửa file gốc. Merge bản KDE Gear mới mà các chữ ký này đổi thì lỗi biên dịch ở file đó:
+
+| Lớp | Thành viên | Dùng cho |
+| --- | --- | --- |
+| `TimelineModel` | `requestClipCreation`, `getTrackById_const`, `getClipPtr`, `m_groups` | `insert_clip`/`add_music`/chữ (tạo clip một stream, không hộp thoại), kiểm mix, độ dài nguồn, nhóm V+A |
+| `ClipModel` | `getMaxDuration` | Kiểm `trim` không vượt nguồn |
+| `MarkerListModel` | `addMarker(GenTime, QString, int, Fun &, Fun &)` | `add_markers` gom vào một bước undo |
+
 ## Biết trước, chưa vá
 
 | Hiện tượng | Ảnh hưởng | Khi nào xử lý |

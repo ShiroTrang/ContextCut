@@ -25,9 +25,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - MSYS2 riêng: `D:\ContextCut\env\msys64` (UCRT64; mặc định `<repo>\..\env\msys64`, đổi bằng `-Msys2Root` hoặc `CONTEXTCUT_MSYS2`). **Không đụng `C:\msys64`** (Python trên PATH của Nhan lấy từ đó).
 - Thư mục: `build\` (Ninja), `stage\` (cài thử, `stage\bin\contextcut.exe`), ccache dùng chung `D:\ContextCut\env\ccache`.
 - Thời gian (8 nhân): build đầy đủ 22–27 phút; không đổi gì thì ~10 giây; sửa một file `.cpp` thì vài chục giây (ccache).
-- Chưa có test C++ tự động (`BUILD_TESTING=OFF`). Kiểm bằng cách chạy app.
+- Chưa có test C++ trong CMake (`BUILD_TESTING=OFF`). Op sửa timeline (P1c) kiểm qua cầu nối: `uv run contextcut-ai/tools/p1_fixture.py --out <dir>` dựng project `p1-gate` và in lệnh mở app, rồi `uv run --directory contextcut-ai pytest -m live` (`test_live_ops.py`: mỗi op apply → `undo_batch` → so toàn bộ timeline; chỉ chạy khi project tên `p1-gate`).
 - Cầu nối AI (P1a): app ghi `%LOCALAPPDATA%\contextcut\bridge.json` (cổng + token mỗi lần chạy). Khi app đang chạy: `uv run contextcut-ai/tools/bridge_probe.py check` (20 kiểm tra), `… call get_timeline limit=5`, `… watch`.
-- MCP server (P1b, `contextcut-ai/README.md`): `uv run --directory contextcut-ai pytest` (test sống `-m live` tự bỏ qua khi app không chạy); đăng ký cho client: `uv run --directory contextcut-ai python scripts/register_clients.py [--dry-run]` (hỏi y/N từng thay đổi). Sửa `contextcut-ai/guide/` thì chạy `scripts/gen_agent_docs.py`.
+- MCP server (P1b–P1c, `contextcut-ai/README.md`): `uv run --directory contextcut-ai pytest` (test sống `-m live` tự bỏ qua khi app không chạy); đăng ký cho client: `uv run --directory contextcut-ai python scripts/register_clients.py [--dry-run]` (hỏi y/N từng thay đổi). Sửa `contextcut-ai/guide/` thì chạy `scripts/gen_agent_docs.py`.
+- Op sửa timeline (P1c): `src/contextcut/ops/` — thêm op = `OpSpec` (`opregistry.cpp`) + `checkState` (`opvalidator.cpp`) + hàm trong `timelineops.cpp`, mọi lời gọi Kdenlive qua `TimelineOps::step()`. Thành viên `protected` của Kdenlive lấy qua `timelineaccess.h` (không sửa mã gốc).
 
 ## Quy tắc fork mỏng
 
@@ -54,7 +55,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\run.ps1
 - Giết app thì lần sau hộp "File Recovery" chặn việc nạp project (cầu nối trả `no_project` tới khi bấm "Do not recover").
 - Ở màn hình chào (cửa sổ `Splash`, khi mở app không kèm project và không `--no-welcome`) cửa sổ chính chưa dựng nên **cầu nối chưa mở**, chưa có `bridge.json`.
 - Thử agent bằng `claude -p` từ trong phiên Claude Code của app desktop: bỏ các biến `CLAUDE*`, `ANTHROPIC_*` thừa hưởng từ app trước khi chạy; CLI báo 401 "token revoked" thì Nhan chạy `claude auth login`. Trong Git Bash, đối số `/mcp__…` bị đổi thành `C:/Program Files/Git/mcp__…`: đặt `MSYS_NO_PATHCONV=1`.
-- Đóng app khi project đã sửa: `WindowPattern.Close` của UIA treo vì hộp "save changes?" là modal, và UIA không thấy nút trong hộp đó. Gửi `WM_CLOSE` cho cửa sổ chính, rồi `PostMessage` nhấp chuột vào "Do Not Save" (hộp `Warning - ContextCut` 544×125, nút ở toạ độ cửa sổ ≈ 398,94).
+- Đóng app khi project đã sửa: `WindowPattern.Close` của UIA treo vì hộp "save changes?" là modal, và UIA không thấy nút trong hộp đó. Gửi `WM_CLOSE` cho cửa sổ chính, rồi `PostMessage` nhấp chuột vào "Do Not Save" bằng **toạ độ client** ≈ 394,63 (hộp `Warning - ContextCut` 549×125, client 533×86).
+- `-i` của app nhận **một** danh sách file phân cách dấu phẩy; lặp `-i` thì chỉ cái cuối có tác dụng.
+- Phím tắt (Ctrl+Z, Ctrl+Shift+Z, Ctrl+S) gửi bằng `SendKeys` sau `SetForegroundWindow` cửa sổ chính thì ăn; Home thì không (focus ở bin). Lưu lần đầu project tạo bằng Kdenlive cũ hiện hộp "modified by Kdenlive… backup" (Enter).
+- Kdenlive thêm "hh:mm " trước mọi nhãn undo; tham số keyframe của hiệu ứng (vd. `level` của Volume) phải là chuỗi animation MLT (`0=-6`), số trần bị đọc thành rỗng.
+- Thông báo "đang xử lý" trên thanh trạng thái của Kdenlive giữ tối thiểu 4 s trước khi thông báo khác thay.
+- Dựng một khung hình từ `.kdenlive` để tự kiểm: trong bash UCRT64 `MLT_REPOSITORY_DENY=libmltjackrack:libmltladspa melt -quiet x.kdenlive in=N out=N -consumer avformat:f.png vcodec=png an=1`.
+- `codex exec` không duyệt được tool MCP sửa (chính sách `never`): thử sửa bằng Codex thì chạy tương tác.
 - `D:\ContextCut` đang được loại khỏi Windows Defender: chỉ tải từ nguồn chính thức. Nhắc Nhan gỡ loại trừ khi xong dự án.
 
 ## Giai đoạn
@@ -64,7 +71,7 @@ Mỗi giai đoạn chạy trong **một session mới**: đọc ghi chú bàn gi
 | GĐ | Nội dung | Trạng thái |
 | --- | --- | --- |
 | P0 | Nền: repo, build một lệnh, đổi tên tối thiểu, fix Waves | Xong 21/10/2026 (`docs/handoff/P0.md`) |
-| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | Đang làm: **P1a xong** 22/10/2026 (cầu nối C++ + tool đọc, `docs/handoff/P1a.md`); **P1b xong** 22/10/2026 (MCP server Python, guide v0, đăng ký client, `docs/handoff/P1b.md`); P1c (ops, undo, cổng P1) chưa |
+| P1 | Cầu nối: AiBridgeServer, JSON-RPC, ops cơ bản, MCP server Python | **Xong** 22/10/2026: P1a cầu nối C++ (`docs/handoff/P1a.md`), P1b MCP server + guide (`docs/handoff/P1b.md`), P1c op sửa timeline, một bước undo mỗi đợt, cổng P1 qua với Claude Code (`docs/handoff/P1c.md`, có tóm tắt P1) |
 | P2 | Phụ đề chuẩn timing, vision, xuất, `zoom` | Chưa |
 | P3 | Dàn ý, `find_moments`, `detect_beats`, `beat_montage` | Chưa |
 | P4 | Multi-POV, placeholder, sync | Chưa |
