@@ -804,7 +804,7 @@ def build_server(bridge: BridgeClient | None = None) -> MCPServer:
         job = jobs.submit("export", {
             "confirm_id": confirm["confirm_id"], "output": out.as_posix(), "start_f": lo, "end_f": hi, "preset": preset,
             "encoder": encoder, "overwrite": overwrite, "originals": originals, "profile": state["profile"],
-            "sources": sources, "project": state["project"].get("path")})
+            "sources": sources, "project": state["project"].get("path"), "sequence": state["sequence"]["uuid"]})
         waiting = (exporter.WAITING_STAGE, "bắt đầu", "đang khởi động worker")
         deadline = time.monotonic() + EXPORT_WAIT_S
         while job["status"] in jobs.ACTIVE and job.get("stage") in waiting and time.monotonic() < deadline:

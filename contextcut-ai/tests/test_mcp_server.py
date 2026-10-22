@@ -704,7 +704,7 @@ async def test_export_asks_app_then_submits_job(mcp, bridge, tmp_path, export_jo
     kind, params = export_jobs[0]
     assert kind == "export" and params["confirm_id"] == "c-7" and params["profile"] == EDITOR_STATE["profile"]
     assert params["sources"] == ["D:/OBS/Ông Sang câu con cá.mkv", "D:/Nhạc/Can Can.mp3"]
-    assert params["project"] == EDITOR_STATE["project"]["path"]
+    assert params["project"] == EDITOR_STATE["project"]["path"] and params["sequence"] == EDITOR_STATE["sequence"]["uuid"]
     assert "đang xuất" in out["next"]
 
 

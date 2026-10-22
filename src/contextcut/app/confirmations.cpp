@@ -50,6 +50,8 @@ struct Entry
     QString state{QStringLiteral("pending")};
     QJsonValue revision{QJsonValue::Null};
     QPointer<QMessageBox> box;
+    /** The project asked about: an answer given after another project was opened must not export that one */
+    QPointer<KdenliveDoc> doc;
 };
 QHash<QString, Entry> s_entries;
 QStringList s_order;
@@ -119,6 +121,8 @@ void remember(const QString &id, const Entry &entry)
     }
 }
 
+/** Records the answer. @p bridge null: the project is being destroyed, so no revision is read (RevisionTracker::sync would
+    touch the half-destroyed document). */
 void answer(AiBridgeServer *bridge, const QString &id, const QString &state)
 {
     auto it = s_entries.find(id);
@@ -126,7 +130,7 @@ void answer(AiBridgeServer *bridge, const QString &id, const QString &state)
         return;
     }
     it->state = state;
-    it->revision = bridge->revisions()->current();
+    it->revision = bridge ? QJsonValue(bridge->revisions()->current()) : QJsonValue(QJsonValue::Null);
     qCInfo(CC_CONFIRM) << "confirmation" << id << state;
 }
 
@@ -180,10 +184,12 @@ JsonRpc::RpcResult request(AiBridgeServer *bridge, const QJsonObject &params)
     }
 
     const double fps = pCore->getCurrentFps();
+    KdenliveDoc *doc = pCore->currentDoc();
+    const QString project = doc->url().isEmpty() ? QStringLiteral("(chưa lưu)") : doc->url().fileName();
     QString text = QStringLiteral("AI muốn xuất video. File chỉ được ghi khi bạn bấm \"Xuất\".\n\n"
-                                  "File: %1\nĐoạn: %2 – %3 (dài %4)\nKiểu xuất: %5\nMã hoá: %6")
-                       .arg(QDir::toNativeSeparators(info.absoluteFilePath()), timecode(start, fps), timecode(end, fps), timecode(end - start, fps),
-                            Presets.value(preset), Encoders.value(encoder));
+                                  "Project: %1\nFile: %2\nĐoạn: %3 – %4 (dài %5)\nKiểu xuất: %6\nMã hoá: %7")
+                       .arg(project, QDir::toNativeSeparators(info.absoluteFilePath()), timecode(start, fps), timecode(end, fps),
+                            timecode(end - start, fps), Presets.value(preset), Encoders.value(encoder));
     if (overwrite && info.exists()) {
         text += QStringLiteral("\n\n⚠ GHI ĐÈ file đang có ở đường dẫn trên.");
     }
@@ -200,9 +206,19 @@ JsonRpc::RpcResult request(AiBridgeServer *bridge, const QJsonObject &params)
     const QString id = QStringLiteral("c-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
     Entry entry;
     entry.box = box;
+    entry.doc = doc;
     remember(id, entry);
     QObject::connect(box, &QDialog::finished, bridge, [bridge, id, box, accept]() {
-        answer(bridge, id, box->clickedButton() == accept ? QStringLiteral("accepted") : QStringLiteral("rejected"));
+        const bool sameProject = s_entries.value(id).doc == pCore->currentDoc();
+        answer(bridge, id,
+               !sameProject                       ? QStringLiteral("cancelled")
+                   : box->clickedButton() == accept ? QStringLiteral("accepted")
+                                                    : QStringLiteral("rejected"));
+    });
+    // Closing the project (opening another one, quitting) withdraws the question
+    QObject::connect(doc, &QObject::destroyed, box, [id, box]() {
+        answer(nullptr, id, QStringLiteral("cancelled"));
+        box->close();
     });
     QTimer::singleShot(ExpireMs, box, [bridge, id, box]() {
         answer(bridge, id, QStringLiteral("expired"));

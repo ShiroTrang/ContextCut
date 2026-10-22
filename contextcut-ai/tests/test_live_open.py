@@ -126,6 +126,10 @@ async def test_open_other_project_and_back(app):
     other = home.with_name("p1-gate bản sao Tập 2.kdenlive")
     shutil.copyfile(home, other)
     try:
+        # một hộp xác nhận xuất còn chờ: đổi project thì hộp tự rút (không để bấm Xuất cho project khác)
+        asked = await app.call("request_confirmation", {
+            "kind": "export", "output": str(home.with_name("không xuất.mp4")), "start_f": 0, "end_f": 10,
+            "preset": "project", "encoder": "x264", "overwrite": False})
         started = await app.call("open_project", {"path": str(other)})
         assert started["state"] == "pending" and started["modified"] is False
         # trong lúc mở: method khác bị từ chối (busy) hoặc chạy sau khi mở xong — không bao giờ chen vào giữa
@@ -136,6 +140,7 @@ async def test_open_other_project_and_back(app):
             assert e.kind in {"busy", "conflict"}, e
         status = await wait_open(app, started["request_id"])
         assert status["state"] == "opened", status
+        assert (await app.call("get_confirmation", {"confirm_id": asked["confirm_id"]}))["state"] == "cancelled"
         state = await ready_state(app)
         assert state["project"]["name"] == other.stem and state["revision"] != app.state["revision"]
         # một đợt trong project mới, hoàn tác cho sạch rồi quay về

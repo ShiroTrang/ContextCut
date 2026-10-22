@@ -80,9 +80,9 @@ def _same(a: str | os.PathLike, b: str | os.PathLike) -> bool:
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def part_path(output: Path) -> Path:
-    """File tạm cạnh file đích (cùng ổ nên đổi tên tức thì)."""
-    return output.with_name(output.stem + ".part" + output.suffix)
+def part_path(output: Path, token: str) -> Path:
+    """File tạm cạnh file đích (cùng ổ nên đổi tên tức thì); `token` riêng mỗi job để không đụng file nào có sẵn."""
+    return output.with_name(f"{output.stem}.{token}.part{output.suffix}")
 
 
 def check_output(path: str, *, sources: list[str], project: str | None, overwrite: bool) -> Path:
@@ -99,13 +99,12 @@ def check_output(path: str, *, sources: list[str], project: str | None, overwrit
         raise ValueError(f"{p} đi qua symlink/junction: đưa đường dẫn thật ({os.path.realpath(p)}).")
     if p.is_dir():
         raise ValueError(f"{p} là thư mục, cần tên file .mp4.")
-    for target in (p, part_path(p)):
-        if project and _same(target, project):
-            raise ValueError("output trùng file project: chọn tên khác.")
-        for src in sources:
-            if src and _same(target, src):
-                raise ValueError(f"output trùng file nguồn đang dùng trong project ({src}): xuất không bao giờ ghi đè "
-                                 "file nguồn. Chọn tên khác.")
+    if project and _same(p, project):
+        raise ValueError("output trùng file project: chọn tên khác.")
+    for src in sources:
+        if src and _same(p, src):
+            raise ValueError(f"output trùng file nguồn đang dùng trong project ({src}): xuất không bao giờ ghi đè "
+                             "file nguồn. Chọn tên khác.")
     if p.exists() and not overwrite:
         raise ValueError(f"{p} đã có. Chọn tên khác, hoặc hỏi người dùng rồi gọi lại với overwrite=true.")
     return p
@@ -265,8 +264,10 @@ def run_melt(xml: Path, total: int, report: Callable[..., None], label: str) -> 
     return proc.returncode, list(tail)
 
 
-def _bridge_wait_and_scene(confirm_id: str, originals: bool, report: Callable[..., None]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Chờ người dùng trả lời hộp xác nhận; đồng ý → scene lúc đó. Huỷ job khi đang chờ → đóng hộp trong app."""
+def _bridge_wait_and_scene(confirm_id: str, originals: bool, report: Callable[..., None],
+                           expect: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Chờ người dùng trả lời hộp xác nhận; đồng ý → scene lúc đó, sau khi kiểm vẫn là project và sequence đã hỏi
+    (`expect`: `project`, `sequence`). Huỷ job khi đang chờ → đóng hộp trong app."""
 
     async def main() -> tuple[dict[str, Any], dict[str, Any]]:
         client = BridgeClient()
@@ -274,6 +275,9 @@ def _bridge_wait_and_scene(confirm_id: str, originals: bool, report: Callable[..
             while True:
                 answer = await client.call("get_confirmation", {"confirm_id": confirm_id})
                 if answer["state"] == "accepted":
+                    state = await client.call("get_editor_state")
+                    if (state["project"].get("path"), state["sequence"]["uuid"]) != (expect.get("project"), expect.get("sequence")):
+                        raise RuntimeError("project hoặc sequence đang mở đã khác lúc hỏi xác nhận: không xuất; gọi export lại")
                     return answer, await client.call("get_scene", {"originals": originals})
                 if answer["state"] != "pending":
                     reason = {"rejected": "người dùng bấm Không xuất", "expired": "hết 15 phút không ai trả lời",
@@ -302,11 +306,12 @@ def _bridge_wait_and_scene(confirm_id: str, originals: bool, report: Callable[..
 
 def run(params: dict[str, Any], report: Callable[..., None]) -> dict[str, Any]:
     """Job `export`. params: `confirm_id, output, start_f, end_f, preset, encoder, overwrite, originals, profile,
-    sources, project`."""
+    sources, project, sequence` (project = đường dẫn .kdenlive hoặc null, sequence = uuid lúc hỏi)."""
     output = Path(params["output"])
     start_f, end_f = int(params["start_f"]), int(params["end_f"])
     frames = end_f - start_f
-    answer, scene = _bridge_wait_and_scene(params["confirm_id"], bool(params.get("originals", True)), report)
+    answer, scene = _bridge_wait_and_scene(params["confirm_id"], bool(params.get("originals", True)), report,
+                                           {"project": params.get("project"), "sequence": params.get("sequence")})
     profile = scene["profile"]
     if (profile["width"], profile["height"], profile_fps(profile)) != (
             params["profile"]["width"], params["profile"]["height"], profile_fps(params["profile"])):
@@ -317,7 +322,7 @@ def run(params: dict[str, Any], report: Callable[..., None]) -> dict[str, Any]:
     fps = profile_fps(profile)
     work = data_dir() / "export" / uuid.uuid4().hex[:12]
     work.mkdir(parents=True, exist_ok=True)
-    part = part_path(output)
+    part = part_path(output, uuid.uuid4().hex[:8])
     force_fail = os.environ.get("CONTEXTCUT_FORCE_NVENC_FAIL") == "1"
     encoder = params.get("encoder", "auto")
     attempts = ["nvenc", "x264"] if encoder == "auto" else [encoder]

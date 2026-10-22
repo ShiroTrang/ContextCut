@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from p2_fixture import make_frame_code_video, read_frame_code  # noqa: E402
 
 from contextcut_ai import exporter, jobs, paths, render  # noqa: E402
+from fake_bridge import EDITOR_STATE  # noqa: E402
 
 PROFILE_25 = {"fps": {"num": 25, "den": 1}, "width": 1280, "height": 720}
 FPS = Fraction(25)
@@ -101,10 +102,6 @@ def test_check_output_rules(tmp_path):
     for path, why in bad.items():
         with pytest.raises(ValueError, match=why):
             exporter.check_output(path, sources=[str(source)], project=str(project), overwrite=True)
-    # file tạm .part.mp4 trùng nguồn cũng bị chặn
-    part_source = folder / "x.part.mp4"
-    with pytest.raises(ValueError, match="file nguồn"):
-        exporter.check_output(str(folder / "x.mp4"), sources=[str(part_source)], project=None, overwrite=False)
     existing = folder / "cũ.mp4"
     existing.write_bytes(b"x")
     with pytest.raises(ValueError, match="overwrite"):
@@ -180,7 +177,7 @@ def export_params(tmp_path: Path, **over) -> dict:
     out_dir.mkdir(exist_ok=True)
     return {"confirm_id": "c-1", "output": (out_dir / "Tập 1.mp4").as_posix(), "start_f": 10, "end_f": 60,
             "preset": "project", "encoder": "x264", "overwrite": False, "originals": True, "profile": PROFILE_25,
-            "sources": [], "project": None} | over
+            "sources": [], "project": EDITOR_STATE["project"]["path"], "sequence": EDITOR_STATE["sequence"]["uuid"]} | over
 
 
 async def wait_job(job_id: str, timeout: float = 60) -> dict:
@@ -213,7 +210,7 @@ async def test_job_waits_for_confirmation_then_exports(job_env, tmp_path):
     assert result["ok"] and result["encoder"] == "x264" and result["fallback_reason"] is None
     assert result["frames"] == 50 and result["confirmed_revision"] == 77
     out = Path(params["output"])
-    assert out.exists() and not exporter.part_path(out).exists()
+    assert out.exists() and not list(out.parent.glob("*.part.mp4"))
     assert len(calls) >= 3
     assert [m for m, _ in job_env.calls].count("get_scene") == 1
     assert not list((tmp_path / "data" / "export").glob("*"))  # thư mục làm việc đã dọn
@@ -255,7 +252,7 @@ async def test_job_nvenc_failure_falls_back_to_x264(job_env, tmp_path, monkeypat
     nvenc_only = await wait_job(jobs.submit("export", export_params(tmp_path, encoder="nvenc",
                                                                    output=(tmp_path / "Xuất ra" / "b.mp4").as_posix()))["id"])
     assert nvenc_only["status"] == "failed" and "NVENC" in nvenc_only["error"]
-    assert not (tmp_path / "Xuất ra" / "b.mp4").exists() and not (tmp_path / "Xuất ra" / "b.part.mp4").exists()
+    assert not (tmp_path / "Xuất ra" / "b.mp4").exists() and not list((tmp_path / "Xuất ra").glob("b.*.part.mp4"))
 
 
 @pytest.mark.anyio
@@ -264,3 +261,13 @@ async def test_job_timeline_shorter_after_confirmation(job_env, tmp_path):
     job_env.responses["get_scene"]["duration_f"] = 40
     done = await wait_job(jobs.submit("export", export_params(tmp_path))["id"])
     assert done["status"] == "failed" and "40 frame" in done["error"]
+
+
+@pytest.mark.anyio
+async def test_job_refuses_other_project_after_confirmation(job_env, tmp_path):
+    """Người dùng mở project khác rồi mới bấm Xuất ở hộp cũ: không xuất timeline của project mới."""
+    job_env.responses["get_confirmation"], _ = confirmations("accepted")
+    params = export_params(tmp_path, project="D:/Videos/Tập khác.kdenlive")
+    done = await wait_job(jobs.submit("export", params)["id"])
+    assert done["status"] == "failed" and "đã khác" in done["error"]
+    assert "get_scene" not in [m for m, _ in job_env.calls] and not Path(params["output"]).exists()

@@ -11,6 +11,7 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 from pathlib import Path
@@ -58,7 +59,8 @@ def prune(directory: Path, keep: int) -> None:
 def _extract_one(ffmpeg: str, path: Path, s: int, fps: Fraction, width: int, out: Path) -> Path | FrameError:
     if out.exists() and out.stat().st_size > 0:
         return out
-    tmp = out.with_name(f"{out.stem}.tmp{os.getpid()}.jpg")
+    # Tên tạm riêng mỗi luồng: hai lời gọi song song trong cùng server có thể trích cùng một frame
+    tmp = out.with_name(f"{out.stem}.tmp{os.getpid()}-{threading.get_ident()}.jpg")
     # Seek tới nửa frame trước frame s: ffmpeg bỏ mọi frame có pts < mốc seek, frame đầu còn lại là s
     seek = max(Fraction(0), (s - Fraction(1, 2)) / fps)
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", f"{float(seek):.6f}", "-i", str(path),
@@ -113,7 +115,8 @@ def contact_sheet(tiles: list[tuple[Path | None, str]], cols: int, tile_w: int, 
         layout.append(f"{(i % cols) * tile_w}_{(i // cols) * tile_h}")
     graph.append("".join(f"[t{i}]" for i in range(rows * cols)) + f"xstack=inputs={rows * cols}:layout={'|'.join(layout)}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(f"{out.stem}.tmp{os.getpid()}.jpg")
+    # Tên tạm riêng mỗi luồng: hai lời gọi song song trong cùng server có thể trích cùng một frame
+    tmp = out.with_name(f"{out.stem}.tmp{os.getpid()}-{threading.get_ident()}.jpg")
     cmd += ["-filter_complex", ";".join(graph), "-frames:v", "1", "-q:v", JPEG_QUALITY, str(tmp.resolve())]
     subprocess.run(cmd, check=True, capture_output=True, creationflags=NO_WINDOW, cwd=fonts if label else None)
     os.replace(tmp, out)

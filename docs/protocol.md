@@ -408,7 +408,7 @@ Việc cần người dùng đồng ý **trong app** (design: xuất file; sau n
 
 Tối đa 4 hộp chờ cùng lúc (thêm → `busy`). Chưa có project → `no_project`.
 
-`get_confirmation{confirm_id}` → `{"confirm_id", "state", "revision"}`: `state` ∈ `pending` (chưa trả lời), `accepted`, `rejected` (bấm "Không xuất" hoặc đóng hộp), `expired` (15 phút không trả lời, hộp tự đóng), `cancelled` (`cancel_confirmation`). `revision` là revision lúc người dùng trả lời (`null` khi còn chờ). Id lạ (kể cả của lần chạy app trước) → `not_found`.
+`get_confirmation{confirm_id}` → `{"confirm_id", "state", "revision"}`: `state` ∈ `pending` (chưa trả lời), `accepted`, `rejected` (bấm "Không xuất" hoặc đóng hộp), `expired` (15 phút không trả lời, hộp tự đóng), `cancelled` (`cancel_confirmation`, hoặc project đã đóng/đổi trước khi người dùng trả lời: hộp tự rút, không bao giờ thành `accepted` cho project khác). `revision` là revision lúc người dùng trả lời (`null` khi còn chờ hoặc khi hộp rút vì project đóng). Hộp ghi tên project. Id lạ (kể cả của lần chạy app trước) → `not_found`.
 
 `cancel_confirmation{confirm_id}` → đóng hộp nếu còn chờ; trả như `get_confirmation`.
 
